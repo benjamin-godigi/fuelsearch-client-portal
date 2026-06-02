@@ -1,9 +1,6 @@
 name: Deploy production
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
@@ -14,19 +11,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare SSH key
+      - name: Install FTP client
         run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.CPANEL_SSH_KEY }}" > ~/.ssh/cpanel_deploy_key
-          chmod 600 ~/.ssh/cpanel_deploy_key
+          sudo apt-get update
+          sudo apt-get install -y lftp
 
       - name: Deploy to production
+        env:
+          FTP_HOST: ${{ secrets.CPANEL_FTP_HOST }}
+          FTP_PORT: ${{ secrets.CPANEL_FTP_PORT }}
+          FTP_USERNAME: ${{ secrets.CPANEL_FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
+          FTP_TARGET_DIR: ${{ secrets.CPANEL_FTP_PRODUCTION_DIR }}
         run: |
-          rsync -az --delete \
-            --exclude ".git/" \
-            --exclude ".github/" \
-            --exclude "node_modules/" \
-            --exclude "vendor/" \
-            --exclude ".env" \
-            -e "ssh -i ~/.ssh/cpanel_deploy_key -p ${{ secrets.CPANEL_PORT }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
-            ./ "${{ secrets.CPANEL_USERNAME }}@${{ secrets.CPANEL_HOST }}:${{ secrets.CPANEL_PRODUCTION_PATH }}/"
+          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" -p "$FTP_PORT" "$FTP_HOST" <<EOF
+          set ftp:ssl-force true
+          set ftp:ssl-protect-data true
+          set net:max-retries 2
+          set net:timeout 30
+          mirror --reverse --delete --verbose \
+            --exclude-glob .git/ \
+            --exclude-glob .github/ \
+            --exclude-glob node_modules/ \
+            --exclude-glob vendor/ \
+            --exclude-glob .env \
+            ./ "$FTP_TARGET_DIR"
+          bye
+          EOF
