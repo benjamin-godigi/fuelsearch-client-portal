@@ -19,7 +19,6 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.CPANEL_SSH_KEY }}" > ~/.ssh/cpanel_deploy_key
           chmod 600 ~/.ssh/cpanel_deploy_key
-          ssh-keyscan -p "${{ secrets.CPANEL_PORT }}" "${{ secrets.CPANEL_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Deploy to production
         run: |
@@ -29,5 +28,5 @@ jobs:
             --exclude "node_modules/" \
             --exclude "vendor/" \
             --exclude ".env" \
-            -e "ssh -i ~/.ssh/cpanel_deploy_key -p ${{ secrets.CPANEL_PORT }}" \
+            -e "ssh -i ~/.ssh/cpanel_deploy_key -p ${{ secrets.CPANEL_PORT }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             ./ "${{ secrets.CPANEL_USERNAME }}@${{ secrets.CPANEL_HOST }}:${{ secrets.CPANEL_PRODUCTION_PATH }}/"
