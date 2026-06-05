@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -16,6 +16,7 @@ import {
   FileText,
   Gauge,
   History,
+  KeyRound,
   LifeBuoy,
   LayoutDashboard,
   LogOut,
@@ -34,7 +35,14 @@ import {
 import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Issue, IssuePriority, IssueStatus, PortalUser, Role, Transaction, TransactionStatus } from "./types";
 import { AppState, clearLegacyPortalState, defaultState, makeId } from "./services/store";
 import { isSupabaseConfigured } from "./lib/supabase";
-import { getSupabaseSession, onSupabaseAuthChange, requestMagicLink, signOutFromSupabase } from "./services/supabaseAuth";
+import {
+  getSupabaseSession,
+  onSupabaseAuthChange,
+  requestPasswordReset,
+  signInWithPassword,
+  signOutFromSupabase,
+  updatePassword,
+} from "./services/supabaseAuth";
 import { loadPortalData } from "./services/portalData";
 
 const LOGO_URL = "https://fuelsearch.co.za/wp-content/uploads/Logo.svg";
@@ -295,6 +303,15 @@ function App() {
   const [signedInUser, setSignedInUser] = useState<PortalUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [passwordRecovery, setPasswordRecovery] = useState(() => (
+    window.location.pathname === "/reset-password"
+    || /(?:^|[&#?])type=recovery(?:&|$)/.test(`${window.location.search}${window.location.hash}`)
+  ));
+  const passwordRecoveryRef = useRef(passwordRecovery);
+
+  useEffect(() => {
+    passwordRecoveryRef.current = passwordRecovery;
+  }, [passwordRecovery]);
 
   const update = (next: Partial<AppState>) => setState((current) => ({ ...current, ...next }));
   const hydrateSupabaseUser = useCallback(async (user: User) => {
@@ -326,6 +343,10 @@ function App() {
     void getSupabaseSession()
       .then((session) => {
         if (!active) return;
+        if (passwordRecoveryRef.current) {
+          setAuthReady(true);
+          return;
+        }
         if (session?.user) {
           void hydrateSupabaseUser(session.user);
           return;
@@ -339,8 +360,19 @@ function App() {
         setAuthReady(true);
       });
 
-    const unsubscribe = onSupabaseAuthChange((_event, session) => {
+    const unsubscribe = onSupabaseAuthChange((event, session) => {
       if (!active) return;
+      if (event === "PASSWORD_RECOVERY") {
+        passwordRecoveryRef.current = true;
+        setPasswordRecovery(true);
+        setAuthError("");
+        setAuthReady(true);
+        return;
+      }
+      if (passwordRecoveryRef.current) {
+        setAuthReady(true);
+        return;
+      }
       if (session?.user) {
         void hydrateSupabaseUser(session.user);
       } else {
@@ -388,7 +420,22 @@ function App() {
           state.currentUser ? (
             <Navigate to={isCustomerRole(state.currentUser.role) ? "/statement" : "/admin"} replace />
           ) : (
-            <LoginPage authError={authError} />
+            <LoginPage authError={authError} clearAuthError={() => setAuthError("")} />
+          )
+        }
+      />
+      <Route
+        path="/reset-password"
+        element={
+          passwordRecovery ? (
+            <PasswordResetPage
+              onComplete={() => {
+                passwordRecoveryRef.current = false;
+                setPasswordRecovery(false);
+              }}
+            />
+          ) : (
+            <Navigate to="/" replace />
           )
         }
       />
@@ -424,43 +471,51 @@ function App() {
   );
 }
 
-function LoginPage({ authError }: { authError: string }) {
+function authErrorMessage(error: unknown, fallback: string) {
+  const detail = error instanceof Error ? error.message : "";
+  if (/invalid login credentials/i.test(detail)) {
+    return "The email or password is incorrect.";
+  }
+  if (/email not confirmed/i.test(detail)) {
+    return "Confirm this email address before signing in.";
+  }
+  if (/rate limit|over_email_send_rate_limit/i.test(detail)) {
+    return "Too many email requests were made. Please wait a few minutes and try again.";
+  }
+  return detail || fallback;
+}
+
+function LoginPage({ authError, clearAuthError }: { authError: string; clearAuthError: () => void }) {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
+  const [resetMode, setResetMode] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const timer = window.setInterval(() => setCooldown((seconds) => Math.max(0, seconds - 1)), 1000);
-    return () => window.clearInterval(timer);
-  }, [cooldown]);
-
-  const sendMagicLink = async (event: FormEvent) => {
+  const submitCredentials = async (event: FormEvent) => {
     event.preventDefault();
     setSubmitting(true);
     setError("");
     setMessage("");
+    clearAuthError();
     if (!isSupabaseConfigured) {
       setError("Portal configuration is incomplete. Please contact FuelSearch support.");
       setSubmitting(false);
       return;
     }
     try {
-      await requestMagicLink(email.trim());
-      setMessage("Check your inbox. Your secure sign-in link is on its way.");
-      setCooldown(60);
+      if (resetMode) {
+        await requestPasswordReset(email.trim());
+        setMessage("If that email has an approved portal account, a password reset link is on its way.");
+      } else {
+        await signInWithPassword(email.trim(), password);
+      }
     } catch (requestError) {
-      const detail = requestError instanceof Error ? requestError.message : "";
-      const isEmailLimit =
-        /rate limit|email.*limit|error sending magic link email|over_email_send_rate_limit/i.test(detail);
-      setError(
-        isEmailLimit
-          ? "Supabase has temporarily reached its email sending limit. Please wait a few minutes and try again."
-          : detail || "Could not send the magic link. Please try again.",
-      );
-      if (isEmailLimit) setCooldown(60);
+      setError(authErrorMessage(
+        requestError,
+        resetMode ? "Could not send the password reset email." : "Could not sign in.",
+      ));
     } finally {
       setSubmitting(false);
     }
@@ -471,30 +526,138 @@ function LoginPage({ authError }: { authError: string }) {
       <section className="login-panel">
         <img src={LOGO_URL} alt="FuelSearch" className="login-logo" />
         <p className="eyebrow">Client Portal</p>
-        <h1>Fuel transaction statements without spreadsheet friction.</h1>
+        <h1>{resetMode ? "Reset your password." : "Welcome back."}</h1>
         <p className="login-copy">
-          Enter the email linked to your FuelSearch account. We will send a secure, password-free sign-in link.
+          {resetMode
+            ? "Enter the email linked to your approved FuelSearch portal account."
+            : "Sign in with the email and password linked to your FuelSearch account."}
         </p>
-        <form className="magic-link-form" onSubmit={sendMagicLink}>
+
+        <form className="auth-form" onSubmit={submitCredentials}>
           <label htmlFor="portal-email">Email address</label>
-          <div className="magic-link-row">
-            <input
-              id="portal-email"
-              type="email"
-              autoComplete="email"
-              inputMode="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="you@company.co.za"
-              required
-            />
-            <button className="button primary" type="submit" disabled={submitting || cooldown > 0}>
-              <Mail size={18} /> {submitting ? "Sending..." : cooldown > 0 ? `Try again in ${cooldown}s` : "Email me a magic link"}
-            </button>
-          </div>
+          <input
+            id="portal-email"
+            type="email"
+            autoComplete="email"
+            inputMode="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="you@company.co.za"
+            required
+          />
+          {!resetMode && (
+            <>
+              <label htmlFor="portal-password">Password</label>
+              <input
+                id="portal-password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+              />
+            </>
+          )}
+          <button className="button primary auth-submit" type="submit" disabled={submitting}>
+            {resetMode ? <Mail size={18} /> : <KeyRound size={18} />}
+            {submitting ? (resetMode ? "Sending..." : "Signing in...") : (resetMode ? "Send reset link" : "Sign in")}
+          </button>
           {(error || authError) && <p className="auth-message auth-error" role="alert">{error || authError}</p>}
           {message && <p className="auth-message auth-success" role="status">{message}</p>}
-          <p className="auth-footnote">The link expires automatically and can only access clients assigned to your account.</p>
+          <button
+            type="button"
+            className="auth-text-button"
+            onClick={() => {
+              setResetMode((current) => !current);
+              setError("");
+              setMessage("");
+              clearAuthError();
+            }}
+          >
+            {resetMode ? "Back to sign in" : "Forgot your password?"}
+          </button>
+          <p className="auth-footnote">Portal access remains limited to users approved by FuelSearch.</p>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function PasswordResetPage({ onComplete }: { onComplete: () => void }) {
+  const navigate = useNavigate();
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const savePassword = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    if (password.length < 8) {
+      setError("Use at least 8 characters for your new password.");
+      return;
+    }
+    if (password !== confirmation) {
+      setError("The passwords do not match.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await updatePassword(password);
+      await signOutFromSupabase();
+      onComplete();
+      navigate("/", {
+        replace: true,
+      });
+    } catch (updateError) {
+      setError(authErrorMessage(
+        updateError,
+        "This password reset link is invalid or has expired. Request a new one from the sign-in page.",
+      ));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <main className="login-screen">
+      <section className="login-panel">
+        <img src={LOGO_URL} alt="FuelSearch" className="login-logo" />
+        <p className="eyebrow">Secure account recovery</p>
+        <h1>Choose a new password.</h1>
+        <p className="login-copy">Your new password must be at least 8 characters long.</p>
+        <form className="auth-form" onSubmit={savePassword}>
+          <input
+            type="text"
+            name="username"
+            autoComplete="username"
+            hidden
+          />
+          <label htmlFor="new-password">New password</label>
+          <input
+            id="new-password"
+            type="password"
+            autoComplete="new-password"
+            minLength={8}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
+          <label htmlFor="confirm-password">Confirm new password</label>
+          <input
+            id="confirm-password"
+            type="password"
+            autoComplete="new-password"
+            minLength={8}
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            required
+          />
+          <button className="button primary auth-submit" type="submit" disabled={submitting}>
+            <KeyRound size={18} /> {submitting ? "Updating..." : "Update password"}
+          </button>
+          {error && <p className="auth-message auth-error" role="alert">{error}</p>}
         </form>
       </section>
     </main>
@@ -1541,7 +1704,7 @@ function SupportRequestModal({ issue, onClose, onSave }: { issue: Issue; onClose
 }
 
 function HelpGuide() {
-  const sections = ["System Overview", "Getting Started", "Admin Dashboard", "Adding New Users", "Magic Link Login", "Transactions & Export", "CSV Import Guide", "Import History", "Customer Statement", "Invoices & PDF Export"];
+  const sections = ["System Overview", "Getting Started", "Admin Dashboard", "Adding New Users", "Portal Login", "Transactions & Export", "CSV Import Guide", "Import History", "Customer Statement", "Invoices & PDF Export"];
   return (
     <div className="page-stack help-page">
       <h1>Help & User Guide</h1><p>Everything you need to know about using the FuelSearch Portal</p>

@@ -1,21 +1,35 @@
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { requireSupabase } from "../lib/supabase";
 
+function appUrl(path = "/") {
+  return new URL(path, window.location.origin).toString();
+}
+
 export async function getSupabaseSession() {
   const { data, error } = await requireSupabase().auth.getSession();
   if (error) throw error;
   return data.session;
 }
 
-export async function requestMagicLink(email: string, redirectTo = window.location.origin) {
-  const { error } = await requireSupabase().auth.signInWithOtp({
+export async function signInWithPassword(email: string, password: string) {
+  const { error } = await requireSupabase().auth.signInWithPassword({
     email,
-    options: {
-      emailRedirectTo: redirectTo,
-      shouldCreateUser: false,
-    },
+    password,
   });
 
+  if (error) throw error;
+}
+
+export async function requestPasswordReset(email: string) {
+  const { error } = await requireSupabase().auth.resetPasswordForEmail(email, {
+    redirectTo: appUrl("/reset-password"),
+  });
+
+  if (error) throw error;
+}
+
+export async function updatePassword(password: string) {
+  const { error } = await requireSupabase().auth.updateUser({ password });
   if (error) throw error;
 }
 

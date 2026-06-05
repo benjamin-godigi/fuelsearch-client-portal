@@ -2,7 +2,7 @@
 
 This portal uses a deliberately small data model:
 
-- Supabase Auth handles passwordless email sign-in.
+- Supabase Auth handles email/password sign-in.
 - One Auth user can own one or more rows in `clients`.
 - Every Auth user has a trusted `profiles` row with a `customer`, `admin`, or
   `super_admin` role.
@@ -79,31 +79,50 @@ Provisioning and imports should be performed through the Supabase Dashboard,
 Codex MCP, or another trusted server-side process. Never use a secret key in
 the React app.
 
-## 3. Magic-Link Authentication
+## 3. Authentication
 
 In Supabase Dashboard:
 
-1. Open **Authentication > Providers > Email** and leave Email enabled.
-2. Open **Authentication > URL Configuration**.
-3. Set **Site URL** to the deployed portal URL.
-4. Add local development as a redirect URL:
+1. Open **Authentication > Providers > Email**, leave Email enabled, and
+   disable new-user signup after approved users have been provisioned.
+2. Open **Authentication > SMTP Settings** and configure a production SMTP
+   provider for password-reset messages.
+3. Open **Authentication > URL Configuration**.
+4. Set **Site URL** to the deployed portal URL.
+5. Add local development as a redirect URL:
    `http://127.0.0.1:5173/**`
-5. Add the deployed portal URL as another redirect, for example:
+6. Add the deployed portal URL as another redirect, for example:
    `https://portal.example.com/**`
 
-`requestMagicLink()` uses `signInWithOtp()` and sends a magic link. It sets
-`shouldCreateUser: false`, making the portal invite-only.
+The frontend exposes no signup action. After any sign-in, the application
+requires a trusted `profiles` row for that exact Auth user UUID; users without
+one are immediately signed out and cannot read portal data.
+
+The built-in Supabase mail service is intended for testing and is limited to
+two email messages per hour. Password sign-in does not send an email on each
+login, but password recovery still requires reliable custom SMTP.
 
 To add a customer:
 
-1. Create the user under **Authentication > Users**.
+1. Create the user under **Authentication > Users** with the customer's email.
 2. Copy the new Auth user's UUID.
-3. Insert a `clients` row whose `user_id` is that UUID.
-4. Import transactions using that client's `id`.
-5. The customer can now request a magic link with the same email address.
+3. Insert a `profiles` row for that UUID and assign the correct role.
+4. Insert a `clients` row whose `user_id` is that UUID.
+5. Import transactions using that client's `id`.
+6. Ask the customer to use **Forgot your password?** once to set a password.
 
 One Auth user may own multiple client rows. This supports an operator who needs
 to view more than one company without introducing teams or membership tables.
+
+### Password Recovery
+
+`requestPasswordReset()` redirects to `/reset-password`. The page accepts the
+temporary recovery session only long enough to call `updatePassword()`, then
+signs the user out so they can log in normally with the new password.
+
+Configure custom SMTP before asking users to use this flow. SMTP host, port,
+username, password, sender name, and sender address are stored in Supabase
+Dashboard and are never frontend environment variables.
 
 ## 4. Environment Variables
 

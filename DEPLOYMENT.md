@@ -49,7 +49,7 @@ Set both variables for Development, Preview, and Production. Builds fail when
 either variable is absent, preventing an unusable deployment from being
 published.
 
-## Supabase Auth URLs
+## Supabase Auth URLs and Providers
 
 After Vercel assigns the production domain:
 
@@ -59,7 +59,16 @@ After Vercel assigns the production domain:
 4. Add `https://*-benjamins-projects-fa59627f.vercel.app/**` for Vercel preview deployments.
 5. Keep `http://127.0.0.1:5173/**` for local development.
 
-Magic-link redirects must match one of these allowed URLs.
+Password-reset redirects must match one of these allowed URLs.
+
+Disable new-user signup in **Authentication > Providers > Email** after all
+approved users have been provisioned. Existing users can still sign in.
+
+For password recovery, configure a production SMTP provider under **Supabase
+Dashboard > Authentication > SMTP Settings**. Do not rely on Supabase's
+best-effort built-in mail service, which is limited to two email messages per
+hour. SMTP credentials belong in Supabase only and must not be added to Vercel
+or the React application.
 
 ## Release Checks
 
