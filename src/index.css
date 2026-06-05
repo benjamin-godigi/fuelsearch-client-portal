@@ -266,6 +266,9 @@ td span { color: var(--muted); font-size: 13px; }
 .sidebar-user .button { grid-column: 2; }
 .sidebar-user .sidebar-logout { background: var(--red); border-color: var(--red); color: #fff; }
 .sidebar-user .sidebar-logout:hover { background: #ad2923; border-color: #ad2923; }
+.preview-user-control { grid-column: 1 / -1; display: grid; gap: 5px; }
+.preview-user-control span { font-size: 12px; font-weight: 700; color: var(--navy); }
+.preview-user-control select { width: 100%; min-width: 0; }
 .admin-content { height: 100vh; padding: 24px clamp(22px, 4vw, 48px); overflow: auto; }
 .admin-topbar { display: flex; justify-content: flex-end; margin-bottom: 14px; position: relative; z-index: 6; }
 .notification-wrap { position: relative; }

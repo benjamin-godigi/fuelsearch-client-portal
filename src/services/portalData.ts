@@ -5,6 +5,7 @@ import type { AppState } from "./store";
 
 interface ClientRow {
   id: number;
+  user_id: string;
   name: string;
   contact_name: string | null;
   contact_email: string | null;
@@ -17,6 +18,13 @@ interface ClientRow {
   province: string | null;
   postal_code: string | null;
   created_at: string;
+}
+
+interface ProfileRow {
+  user_id: string;
+  email: string;
+  display_name: string;
+  role: "super_admin" | "admin" | "customer";
 }
 
 interface TransactionRow {
@@ -52,11 +60,6 @@ function joinAddress(client: ClientRow) {
     .join(", ");
 }
 
-function getDisplayName(user: User, client: ClientRow) {
-  const emailName = user.email?.split("@")[0]?.replace(/[._-]+/g, " ").trim();
-  return client.contact_name || emailName || client.name;
-}
-
 function relationName(relation: TransactionRow["clients"]) {
   if (Array.isArray(relation)) return relation[0]?.name;
   return relation?.name;
@@ -66,10 +69,23 @@ export async function loadPortalData(
   user: User,
 ): Promise<Pick<AppState, "currentUser" | "customers" | "clientDirectory" | "transactions">> {
   const supabase = requireSupabase();
+  const { data: profileData, error: profileError } = await supabase
+    .from("profiles")
+    .select("user_id, email, display_name, role")
+    .order("display_name");
+
+  if (profileError) throw profileError;
+
+  const profiles = (profileData ?? []) as ProfileRow[];
+  const signedInProfile = profiles.find((profile) => profile.user_id === user.id);
+  if (!signedInProfile) {
+    throw new Error("Your login is valid, but no portal profile is linked to it yet.");
+  }
+
   const { data: clientData, error: clientError } = await supabase
     .from("clients")
     .select(
-      "id, name, contact_name, contact_email, phone, vat_number, registration_number, address_line_1, address_line_2, city, province, postal_code, created_at",
+      "id, user_id, name, contact_name, contact_email, phone, vat_number, registration_number, address_line_1, address_line_2, city, province, postal_code, created_at",
     )
     .eq("is_active", true)
     .order("name");
@@ -77,7 +93,7 @@ export async function loadPortalData(
   if (clientError) throw clientError;
 
   const clients = (clientData ?? []) as ClientRow[];
-  if (clients.length === 0) {
+  if (clients.length === 0 && signedInProfile.role === "customer") {
     throw new Error("Your login is valid, but no active client account is linked to it yet.");
   }
 
@@ -86,20 +102,36 @@ export async function loadPortalData(
     .select(
       "id, order_number, status, vehicle_registration, driver_name, odometer_km, requested_litres, filled_litres, parking_nights, parking_fee, fuel_price_per_litre, total_amount, ordered_at, completed_at, expires_at, notes, clients(name), depots(name)",
     )
-    .in("client_id", clients.map((client) => client.id))
+    .in("client_id", clients.map((client) => client.id).length ? clients.map((client) => client.id) : [-1])
     .order("ordered_at", { ascending: false });
 
   if (transactionError) throw transactionError;
 
   const currentUser: DemoUser = {
     id: user.id,
-    email: user.email ?? clients[0].contact_email ?? "",
-    displayName: getDisplayName(user, clients[0]),
-    role: "customer",
-    clientName: clients[0].name,
+    email: signedInProfile.email,
+    displayName: signedInProfile.display_name,
+    role: signedInProfile.role,
+    clientName: signedInProfile.role === "customer" ? clients[0]?.name : undefined,
   };
 
-  const customers: Customer[] = clients.map((client) => ({
+  const profileCustomers: Customer[] = profiles.map((profile) => {
+    const ownedClient = clients.find((client) => client.user_id === profile.user_id);
+    return {
+      id: profile.user_id,
+      email: profile.email,
+      clientName: ownedClient?.name ?? (profile.role === "customer" ? "Unassigned client" : "FuelSearch"),
+      displayName: profile.display_name,
+      role: profile.role,
+      vatNumber: ownedClient?.vat_number ?? undefined,
+      registration: ownedClient?.registration_number ?? undefined,
+      address: ownedClient ? joinAddress(ownedClient) || undefined : undefined,
+    };
+  });
+
+  const clientCustomers: Customer[] = clients
+    .filter((client) => !profiles.some((profile) => profile.user_id === client.user_id))
+    .map((client) => ({
     id: String(client.id),
     email: client.contact_email ?? user.email ?? "",
     clientName: client.name,
@@ -109,6 +141,7 @@ export async function loadPortalData(
     registration: client.registration_number ?? undefined,
     address: joinAddress(client) || undefined,
   }));
+  const customers = [...profileCustomers, ...clientCustomers];
 
   const clientDirectory: ClientDirectoryEntry[] = clients.map((client) => ({
     id: String(client.id),

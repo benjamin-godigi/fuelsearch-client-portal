@@ -4,9 +4,15 @@ This portal uses a deliberately small data model:
 
 - Supabase Auth handles passwordless email sign-in.
 - One Auth user can own one or more rows in `clients`.
+- Every Auth user has a trusted `profiles` row with a `customer`, `admin`, or
+  `super_admin` role.
 - `transactions` belong to a client through `client_id`.
 - `depots` are shared reference data that signed-in users may read.
 - There are no teams, subscriptions, permission matrices, or feedback tables.
+
+Super admins can preview the portal as another user from the admin sidebar.
+Preview mode changes only the visible UI perspective; database queries continue
+to run as the signed-in super admin and remain protected by RLS.
 
 ## 1. Database Schema
 

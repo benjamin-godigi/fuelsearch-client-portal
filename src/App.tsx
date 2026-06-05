@@ -31,7 +31,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Issue, IssuePriority, IssueStatus, Role, Transaction, TransactionStatus } from "./types";
+import type { AdminPermissions, ClientDirectoryEntry, Customer, DemoUser, ImportBatch, Issue, IssuePriority, IssueStatus, Role, Transaction, TransactionStatus } from "./types";
 import { AppState, loadState, loginAs, makeId, saveState } from "./services/store";
 import { dataSource, isSupabaseConfigured } from "./lib/supabase";
 import { getSupabaseSession, onSupabaseAuthChange, requestMagicLink, signOutFromSupabase } from "./services/supabaseAuth";
@@ -292,6 +292,7 @@ function Modal({ title, children, onClose, wide = false }: { title: string; chil
 
 function App() {
   const [state, setState] = useState<AppState>(() => loadState());
+  const [signedInUser, setSignedInUser] = useState(state.currentUser);
   const [authReady, setAuthReady] = useState(dataSource === "demo");
   const [authError, setAuthError] = useState("");
 
@@ -302,9 +303,11 @@ function App() {
     try {
       const portalData = await loadPortalData(user);
       setState((current) => ({ ...current, ...portalData }));
+      setSignedInUser(portalData.currentUser);
       setAuthError("");
     } catch (error) {
       setState((current) => ({ ...current, currentUser: null }));
+      setSignedInUser(null);
       setAuthError(error instanceof Error ? error.message : "Could not load your portal account.");
       await signOutFromSupabase().catch(() => undefined);
     } finally {
@@ -358,7 +361,14 @@ function App() {
       await signOutFromSupabase();
     }
     update({ currentUser: null });
+    setSignedInUser(null);
   };
+
+  const previewAs = (user: DemoUser) => update({ currentUser: user });
+  const exitPreview = () => {
+    if (signedInUser) update({ currentUser: signedInUser });
+  };
+  const isPreviewing = Boolean(signedInUser && state.currentUser && signedInUser.id !== state.currentUser.id);
 
   if (!authReady) {
     return (
@@ -389,7 +399,7 @@ function App() {
         path="/statement"
         element={
           state.currentUser?.role === "customer" ? (
-            <StatementPage state={state} update={update} logout={logout} />
+            <StatementPage state={state} update={update} logout={logout} exitPreview={isPreviewing ? exitPreview : undefined} />
           ) : (
             <Navigate to="/" replace />
           )
@@ -399,7 +409,14 @@ function App() {
         path="/admin/*"
         element={
           state.currentUser && !isCustomerRole(state.currentUser.role) ? (
-            <AdminLayout state={state} update={update} logout={logout} />
+            <AdminLayout
+              state={state}
+              update={update}
+              logout={logout}
+              signedInUser={signedInUser}
+              previewAs={previewAs}
+              exitPreview={isPreviewing ? exitPreview : undefined}
+            />
           ) : (
             <Navigate to="/" replace />
           )
@@ -490,7 +507,7 @@ function LoginPage({ update, authError }: { update: (next: Partial<AppState>) =>
   );
 }
 
-function StatementPage({ state, update, logout }: { state: AppState; update: (next: Partial<AppState>) => void; logout: () => void }) {
+function StatementPage({ state, update, logout, exitPreview }: { state: AppState; update: (next: Partial<AppState>) => void; logout: () => void; exitPreview?: () => void }) {
   const [status, setStatus] = useState<TransactionStatus | "All">("Completed");
   const [sort, setSort] = useState<"newest" | "oldest">("newest");
   const [visible, setVisible] = useState(20);
@@ -555,6 +572,7 @@ function StatementPage({ state, update, logout }: { state: AppState; update: (ne
         </div>
         <div className="top-actions">
           <strong>Hi, {state.currentUser?.displayName}</strong>
+          {exitPreview && <button className="button ghost" onClick={exitPreview}><Shield size={16} /> Return to Super Admin</button>}
           <button className="button dark" onClick={logout}>
             <LogOut size={16} /> Logout
           </button>
@@ -709,7 +727,21 @@ function IssueDialog({ tx, onClose, onSubmit }: { tx?: Transaction; onClose: () 
   );
 }
 
-function AdminLayout({ state, update, logout }: { state: AppState; update: (next: Partial<AppState>) => void; logout: () => void }) {
+function AdminLayout({
+  state,
+  update,
+  logout,
+  signedInUser,
+  previewAs,
+  exitPreview,
+}: {
+  state: AppState;
+  update: (next: Partial<AppState>) => void;
+  logout: () => void;
+  signedInUser: DemoUser | null;
+  previewAs: (user: DemoUser) => void;
+  exitPreview?: () => void;
+}) {
   const location = useLocation();
   const navigate = useNavigate();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -719,6 +751,16 @@ function AdminLayout({ state, update, logout }: { state: AppState; update: (next
   const canManageUsers = !!currentAdmin && (isSuperAdminRole(currentAdmin.role) || !!permissions?.manageUsers);
   const canManageSupport = !!currentAdmin && (isSuperAdminRole(currentAdmin.role) || !!permissions?.manageSupport);
   const canViewActivityLog = !!currentAdmin && (isSuperAdminRole(currentAdmin.role) || !!permissions?.viewActivityLog);
+  const canPreviewUsers = isSuperAdminRole(signedInUser?.role);
+  const previewUsers = state.customers
+    .filter((customer) => customer.email !== signedInUser?.email)
+    .map<DemoUser>((customer) => ({
+      id: customer.id,
+      email: customer.email,
+      displayName: customer.displayName,
+      role: customer.role,
+      clientName: customer.role === "customer" ? customer.clientName : undefined,
+    }));
   const unreadSupportCount = useMemo(
     () => state.issues.filter((issue) => isAfter(issue.loggedAt, state.supportNotificationsSeenAt)).length,
     [state.issues, state.supportNotificationsSeenAt],
@@ -760,6 +802,25 @@ function AdminLayout({ state, update, logout }: { state: AppState; update: (next
         </nav>
         <div className="sidebar-user">
           <div><strong>{currentAdmin?.displayName ?? state.currentUser?.displayName ?? "Admin"}</strong><span>{currentAdmin?.email ?? state.currentUser?.email ?? ""}</span></div>
+          {canPreviewUsers && previewUsers.length > 0 && (
+            <label className="preview-user-control">
+              <span>Preview portal as</span>
+              <select
+                value={exitPreview ? state.currentUser?.id : ""}
+                onChange={(event) => {
+                  const selected = previewUsers.find((user) => user.id === event.target.value);
+                  if (selected) {
+                    previewAs(selected);
+                    navigate(selected.role === "customer" ? "/statement" : "/admin");
+                  }
+                }}
+              >
+                <option value="">Choose a user...</option>
+                {previewUsers.map((user) => <option key={user.id} value={user.id}>{user.displayName} ({formatRole(user.role)})</option>)}
+              </select>
+            </label>
+          )}
+          {exitPreview && <button className="button outline" onClick={exitPreview}>Exit preview</button>}
           {canViewActivityLog ? <Link className="icon-button" to="/admin/activity-log" title="Activity Log"><ClipboardList size={16} /></Link> : <span />}
           <button className="button sidebar-logout" onClick={logout}><LogOut size={16} /> Logout</button>
         </div>
