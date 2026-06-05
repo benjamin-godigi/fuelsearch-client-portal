@@ -106,11 +106,11 @@ Create `.env.local` beside `package.json`:
 ```dotenv
 VITE_SUPABASE_URL=https://your-project-ref.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your-key
-VITE_DATA_SOURCE=demo
+VITE_DATA_SOURCE=supabase
 ```
 
-Use only browser-safe values in `VITE_` variables. Keep
-`VITE_DATA_SOURCE=demo` until the UI repositories read from Supabase.
+Use only browser-safe values in `VITE_` variables. Production and Vercel should
+use `VITE_DATA_SOURCE=supabase`; set it to `demo` only for local mock-data work.
 
 Codex MCP uses a personal access token stored outside the repository:
 
@@ -180,4 +180,3 @@ cross join public.depots d
 where c.user_id = 'AUTH_USER_UUID'
   and d.name = 'Example Fuel Depot';
 ```
-

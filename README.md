@@ -10,8 +10,8 @@ npm run dev
 ```
 
 Copy `example.env` to `.env.local` and add the browser-safe Supabase values.
-Keep `VITE_DATA_SOURCE=demo` until the remaining UI repositories are connected
-to Supabase.
+Use `VITE_DATA_SOURCE=supabase` for real magic-link login, or `demo` for an
+isolated mock-data session.
 
 ## Build
 

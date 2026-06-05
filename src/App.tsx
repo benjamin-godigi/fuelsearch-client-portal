@@ -1,6 +1,6 @@
-import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import * as XLSX from "xlsx";
 import {
   AlertCircle,
   ArrowDownUp,
@@ -20,6 +20,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquarePlus,
+  Mail,
   Pencil,
   Plus,
   Search,
@@ -32,6 +33,9 @@ import {
 } from "lucide-react";
 import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Issue, IssuePriority, IssueStatus, Role, Transaction, TransactionStatus } from "./types";
 import { AppState, loadState, loginAs, makeId, saveState } from "./services/store";
+import { dataSource, isSupabaseConfigured } from "./lib/supabase";
+import { getSupabaseSession, onSupabaseAuthChange, requestMagicLink, signOutFromSupabase } from "./services/supabaseAuth";
+import { loadPortalData } from "./services/portalData";
 
 const LOGO_URL = "https://fuelsearch.co.za/wp-content/uploads/Logo.svg";
 const STATUSES: TransactionStatus[] = ["Completed", "Pending", "Open", "Expired", "Cancelled"];
@@ -174,7 +178,8 @@ function parseDateValue(value: unknown) {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 }
 
-function parseWorkbookRows(file: File): Promise<Record<string, unknown>[]> {
+async function parseWorkbookRows(file: File): Promise<Record<string, unknown>[]> {
+  const XLSX = await import("xlsx");
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("Could not read file"));
@@ -287,15 +292,99 @@ function Modal({ title, children, onClose, wide = false }: { title: string; chil
 
 function App() {
   const [state, setState] = useState<AppState>(() => loadState());
+  const [authReady, setAuthReady] = useState(dataSource === "demo");
+  const [authError, setAuthError] = useState("");
 
   useEffect(() => saveState(state), [state]);
 
   const update = (next: Partial<AppState>) => setState((current) => ({ ...current, ...next }));
-  const logout = () => update({ currentUser: null });
+  const hydrateSupabaseUser = useCallback(async (user: User) => {
+    try {
+      const portalData = await loadPortalData(user);
+      setState((current) => ({ ...current, ...portalData }));
+      setAuthError("");
+    } catch (error) {
+      setState((current) => ({ ...current, currentUser: null }));
+      setAuthError(error instanceof Error ? error.message : "Could not load your portal account.");
+      await signOutFromSupabase().catch(() => undefined);
+    } finally {
+      setAuthReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (dataSource !== "supabase") return;
+    if (!isSupabaseConfigured) {
+      setAuthError("Portal configuration is incomplete. Please contact FuelSearch support.");
+      setAuthReady(true);
+      return;
+    }
+
+    let active = true;
+    void getSupabaseSession()
+      .then((session) => {
+        if (!active) return;
+        if (session?.user) {
+          void hydrateSupabaseUser(session.user);
+          return;
+        }
+        setState((current) => ({ ...current, currentUser: null }));
+        setAuthReady(true);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setAuthError(error instanceof Error ? error.message : "Could not restore your session.");
+        setAuthReady(true);
+      });
+
+    const unsubscribe = onSupabaseAuthChange((_event, session) => {
+      if (!active) return;
+      if (session?.user) {
+        void hydrateSupabaseUser(session.user);
+      } else {
+        setState((current) => ({ ...current, currentUser: null }));
+        setAuthReady(true);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [hydrateSupabaseUser]);
+
+  const logout = async () => {
+    if (dataSource === "supabase") {
+      await signOutFromSupabase();
+    }
+    update({ currentUser: null });
+  };
+
+  if (!authReady) {
+    return (
+      <main className="login-screen">
+        <section className="login-panel login-loading" aria-live="polite">
+          <img src={LOGO_URL} alt="FuelSearch" className="login-logo" />
+          <div className="auth-spinner" />
+          <h1>Opening your portal</h1>
+          <p className="login-copy">Checking your secure session and loading your statement.</p>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <Routes>
-      <Route path="/" element={<LoginPage update={update} />} />
+      <Route
+        path="/"
+        element={
+          state.currentUser ? (
+            <Navigate to={isCustomerRole(state.currentUser.role) ? "/statement" : "/admin"} replace />
+          ) : (
+            <LoginPage update={update} authError={authError} />
+          )
+        }
+      />
       <Route
         path="/statement"
         element={
@@ -321,27 +410,81 @@ function App() {
   );
 }
 
-function LoginPage({ update }: { update: (next: Partial<AppState>) => void }) {
+function LoginPage({ update, authError }: { update: (next: Partial<AppState>) => void; authError: string }) {
   const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
   const login = (role: Role) => {
     update({ currentUser: loginAs(role) });
     navigate(role === "customer" ? "/statement" : "/admin");
   };
+
+  const sendMagicLink = async (event: FormEvent) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+    if (!isSupabaseConfigured) {
+      setError("Portal configuration is incomplete. Please contact FuelSearch support.");
+      setSubmitting(false);
+      return;
+    }
+    try {
+      await requestMagicLink(email.trim());
+      setMessage("Check your inbox. Your secure sign-in link is on its way.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Could not send the magic link.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <main className="login-screen">
       <section className="login-panel">
         <img src={LOGO_URL} alt="FuelSearch" className="login-logo" />
         <p className="eyebrow">Client Portal</p>
         <h1>Fuel transaction statements without spreadsheet friction.</h1>
-        <p className="login-copy">Demo access for testing customer statements, admin imports, users, invoices, issues, and help workflows before Supabase is connected.</p>
-        <div className="login-actions">
-          <button className="button primary" onClick={() => login("super_admin")}>
-            <Shield size={18} /> Continue as Super Admin
-          </button>
-          <button className="button ghost" onClick={() => login("customer")}>
-            <Building2 size={18} /> Continue as Customer
-          </button>
-        </div>
+        <p className="login-copy">
+          {dataSource === "supabase"
+            ? "Enter the email linked to your FuelSearch account. We will send a secure, password-free sign-in link."
+            : "Demo access for testing customer statements and administration before Supabase is connected."}
+        </p>
+        {dataSource === "supabase" ? (
+          <form className="magic-link-form" onSubmit={sendMagicLink}>
+            <label htmlFor="portal-email">Email address</label>
+            <div className="magic-link-row">
+              <input
+                id="portal-email"
+                type="email"
+                autoComplete="email"
+                inputMode="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@company.co.za"
+                required
+              />
+              <button className="button primary" type="submit" disabled={submitting}>
+                <Mail size={18} /> {submitting ? "Sending..." : "Email me a magic link"}
+              </button>
+            </div>
+            {(error || authError) && <p className="auth-message auth-error" role="alert">{error || authError}</p>}
+            {message && <p className="auth-message auth-success" role="status">{message}</p>}
+            <p className="auth-footnote">The link expires automatically and can only access clients assigned to your account.</p>
+          </form>
+        ) : (
+          <div className="login-actions">
+            <button className="button primary" onClick={() => login("super_admin")}>
+              <Shield size={18} /> Continue as Super Admin
+            </button>
+            <button className="button ghost" onClick={() => login("customer")}>
+              <Building2 size={18} /> Continue as Customer
+            </button>
+          </div>
+        )}
       </section>
     </main>
   );
@@ -353,11 +496,20 @@ function StatementPage({ state, update, logout }: { state: AppState; update: (ne
   const [visible, setVisible] = useState(20);
   const [invoiceTx, setInvoiceTx] = useState<Transaction | null>(null);
   const [issueTx, setIssueTx] = useState<Transaction | null>(null);
-  const clientName = state.currentUser?.clientName ?? "Meyer Vervoer";
+  const availableClients = state.clientDirectory.map((client) => client.clientName);
+  const [clientName, setClientName] = useState(
+    state.currentUser?.clientName ?? availableClients[0] ?? "Meyer Vervoer",
+  );
   const customer = state.customers.find((item) => item.clientName === clientName);
   const customerTx = state.transactions.filter((tx) => tx.clientName === clientName);
   const months = Array.from(new Set(customerTx.map((tx) => monthKey(tx.createdAt)).filter(Boolean))).sort().reverse();
   const [selectedMonth, setSelectedMonth] = useState(months[0] ?? "2026-05");
+
+  useEffect(() => {
+    if (months.length > 0 && !months.includes(selectedMonth)) {
+      setSelectedMonth(months[0]);
+    }
+  }, [clientName, months, selectedMonth]);
 
   const monthTx = customerTx.filter((tx) => monthKey(tx.createdAt) === selectedMonth);
   const statusCounts = {
@@ -413,7 +565,13 @@ function StatementPage({ state, update, logout }: { state: AppState; update: (ne
           <div className="title-cluster">
             <div className="title-icon"><Building2 size={22} /></div>
             <div>
-              <h1>{clientName}</h1>
+              {availableClients.length > 1 ? (
+                <select className="client-switcher" value={clientName} onChange={(event) => setClientName(event.target.value)}>
+                  {availableClients.map((name) => <option key={name}>{name}</option>)}
+                </select>
+              ) : (
+                <h1>{clientName}</h1>
+              )}
               <p>Statement of Account</p>
             </div>
           </div>

@@ -34,7 +34,7 @@ Add these under **Project Settings > Environment Variables**:
 ```dotenv
 VITE_SUPABASE_URL=https://your-project-ref.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your-key
-VITE_DATA_SOURCE=demo
+VITE_DATA_SOURCE=supabase
 ```
 
 Use the values from **Supabase Dashboard > Connect**.
@@ -45,8 +45,8 @@ Never add any of these to Vercel frontend variables:
 - `sb_secret_...`
 - legacy `service_role` keys
 
-Keep `VITE_DATA_SOURCE=demo` until the portal's data screens have been moved
-from local demo storage to Supabase queries.
+Use `VITE_DATA_SOURCE=supabase` in Preview and Production. Use `demo` only for
+an intentionally isolated local mock-data session.
 
 ## Supabase Auth URLs
 

@@ -50,6 +50,27 @@ button { cursor: pointer; }
 .login-panel h1 { font-size: clamp(32px, 5vw, 54px); line-height: 0.98; margin: 0 0 18px; color: var(--navy); }
 .login-copy { color: var(--muted); line-height: 1.6; margin-bottom: 28px; }
 .login-actions, .row-actions, .top-actions, .modal-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.magic-link-form { display: grid; gap: 10px; }
+.magic-link-form label { color: var(--navy); font-size: 14px; font-weight: 700; }
+.magic-link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.magic-link-row input, .magic-link-row .button { min-height: 44px; }
+.auth-message { border-radius: 4px; padding: 10px 12px; font-size: 14px; line-height: 1.45; }
+.auth-error { background: #fff0ef; color: #9e2822; border: 1px solid #f1c4c0; }
+.auth-success { background: #edf9f1; color: #076b32; border: 1px solid #bfe3cc; }
+.auth-footnote { color: var(--muted); font-size: 13px; line-height: 1.5; margin-top: 4px; }
+.login-loading { text-align: center; }
+.login-loading .login-logo { margin-inline: auto; }
+.auth-spinner {
+  width: 34px;
+  height: 34px;
+  margin: 2px auto 22px;
+  border: 3px solid #dce4eb;
+  border-top-color: var(--red);
+  border-radius: 50%;
+  animation: auth-spin .8s linear infinite;
+}
+@keyframes auth-spin { to { transform: rotate(360deg); } }
+.client-switcher { min-width: min(360px, 70vw); font-size: 28px; font-weight: 700; color: var(--ink); }
 
 .button, .mini-button, .icon-button {
   border: 1px solid var(--line);
@@ -507,6 +528,7 @@ td span { color: var(--muted); font-size: 13px; }
   table { min-width: 900px; }
   .form-grid { grid-template-columns: 1fr; }
   .login-panel { padding: 28px; }
+  .magic-link-row { grid-template-columns: 1fr; }
   .banking { grid-template-columns: 1fr; }
   .support-summary { grid-template-columns: 1fr; }
   .support-filters { grid-template-columns: 1fr; }
