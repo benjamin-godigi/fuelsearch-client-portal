@@ -8,4 +8,5 @@ dist/
 
 *.local
 *.log
-
+.DS_Store
+Thumbs.db
