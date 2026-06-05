@@ -31,9 +31,9 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { AdminPermissions, ClientDirectoryEntry, Customer, DemoUser, ImportBatch, Issue, IssuePriority, IssueStatus, Role, Transaction, TransactionStatus } from "./types";
-import { AppState, loadState, loginAs, makeId, saveState } from "./services/store";
-import { dataSource, isSupabaseConfigured } from "./lib/supabase";
+import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Issue, IssuePriority, IssueStatus, PortalUser, Role, Transaction, TransactionStatus } from "./types";
+import { AppState, clearLegacyPortalState, defaultState, makeId } from "./services/store";
+import { isSupabaseConfigured } from "./lib/supabase";
 import { getSupabaseSession, onSupabaseAuthChange, requestMagicLink, signOutFromSupabase } from "./services/supabaseAuth";
 import { loadPortalData } from "./services/portalData";
 
@@ -291,12 +291,10 @@ function Modal({ title, children, onClose, wide = false }: { title: string; chil
 }
 
 function App() {
-  const [state, setState] = useState<AppState>(() => loadState());
-  const [signedInUser, setSignedInUser] = useState(state.currentUser);
-  const [authReady, setAuthReady] = useState(dataSource === "demo");
+  const [state, setState] = useState<AppState>(defaultState);
+  const [signedInUser, setSignedInUser] = useState<PortalUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState("");
-
-  useEffect(() => saveState(state), [state]);
 
   const update = (next: Partial<AppState>) => setState((current) => ({ ...current, ...next }));
   const hydrateSupabaseUser = useCallback(async (user: User) => {
@@ -316,7 +314,8 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (dataSource !== "supabase") return;
+    clearLegacyPortalState();
+
     if (!isSupabaseConfigured) {
       setAuthError("Portal configuration is incomplete. Please contact FuelSearch support.");
       setAuthReady(true);
@@ -357,14 +356,12 @@ function App() {
   }, [hydrateSupabaseUser]);
 
   const logout = async () => {
-    if (dataSource === "supabase") {
-      await signOutFromSupabase();
-    }
-    update({ currentUser: null });
+    await signOutFromSupabase();
+    setState(defaultState);
     setSignedInUser(null);
   };
 
-  const previewAs = (user: DemoUser) => update({ currentUser: user });
+  const previewAs = (user: PortalUser) => update({ currentUser: user });
   const exitPreview = () => {
     if (signedInUser) update({ currentUser: signedInUser });
   };
@@ -391,7 +388,7 @@ function App() {
           state.currentUser ? (
             <Navigate to={isCustomerRole(state.currentUser.role) ? "/statement" : "/admin"} replace />
           ) : (
-            <LoginPage update={update} authError={authError} />
+            <LoginPage authError={authError} />
           )
         }
       />
@@ -427,17 +424,18 @@ function App() {
   );
 }
 
-function LoginPage({ update, authError }: { update: (next: Partial<AppState>) => void; authError: string }) {
-  const navigate = useNavigate();
+function LoginPage({ authError }: { authError: string }) {
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const login = (role: Role) => {
-    update({ currentUser: loginAs(role) });
-    navigate(role === "customer" ? "/statement" : "/admin");
-  };
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = window.setInterval(() => setCooldown((seconds) => Math.max(0, seconds - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [cooldown]);
 
   const sendMagicLink = async (event: FormEvent) => {
     event.preventDefault();
@@ -452,8 +450,17 @@ function LoginPage({ update, authError }: { update: (next: Partial<AppState>) =>
     try {
       await requestMagicLink(email.trim());
       setMessage("Check your inbox. Your secure sign-in link is on its way.");
+      setCooldown(60);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not send the magic link.");
+      const detail = requestError instanceof Error ? requestError.message : "";
+      const isEmailLimit =
+        /rate limit|email.*limit|error sending magic link email|over_email_send_rate_limit/i.test(detail);
+      setError(
+        isEmailLimit
+          ? "Supabase has temporarily reached its email sending limit. Please wait a few minutes and try again."
+          : detail || "Could not send the magic link. Please try again.",
+      );
+      if (isEmailLimit) setCooldown(60);
     } finally {
       setSubmitting(false);
     }
@@ -466,42 +473,29 @@ function LoginPage({ update, authError }: { update: (next: Partial<AppState>) =>
         <p className="eyebrow">Client Portal</p>
         <h1>Fuel transaction statements without spreadsheet friction.</h1>
         <p className="login-copy">
-          {dataSource === "supabase"
-            ? "Enter the email linked to your FuelSearch account. We will send a secure, password-free sign-in link."
-            : "Demo access for testing customer statements and administration before Supabase is connected."}
+          Enter the email linked to your FuelSearch account. We will send a secure, password-free sign-in link.
         </p>
-        {dataSource === "supabase" ? (
-          <form className="magic-link-form" onSubmit={sendMagicLink}>
-            <label htmlFor="portal-email">Email address</label>
-            <div className="magic-link-row">
-              <input
-                id="portal-email"
-                type="email"
-                autoComplete="email"
-                inputMode="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@company.co.za"
-                required
-              />
-              <button className="button primary" type="submit" disabled={submitting}>
-                <Mail size={18} /> {submitting ? "Sending..." : "Email me a magic link"}
-              </button>
-            </div>
-            {(error || authError) && <p className="auth-message auth-error" role="alert">{error || authError}</p>}
-            {message && <p className="auth-message auth-success" role="status">{message}</p>}
-            <p className="auth-footnote">The link expires automatically and can only access clients assigned to your account.</p>
-          </form>
-        ) : (
-          <div className="login-actions">
-            <button className="button primary" onClick={() => login("super_admin")}>
-              <Shield size={18} /> Continue as Super Admin
-            </button>
-            <button className="button ghost" onClick={() => login("customer")}>
-              <Building2 size={18} /> Continue as Customer
+        <form className="magic-link-form" onSubmit={sendMagicLink}>
+          <label htmlFor="portal-email">Email address</label>
+          <div className="magic-link-row">
+            <input
+              id="portal-email"
+              type="email"
+              autoComplete="email"
+              inputMode="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="you@company.co.za"
+              required
+            />
+            <button className="button primary" type="submit" disabled={submitting || cooldown > 0}>
+              <Mail size={18} /> {submitting ? "Sending..." : cooldown > 0 ? `Try again in ${cooldown}s` : "Email me a magic link"}
             </button>
           </div>
-        )}
+          {(error || authError) && <p className="auth-message auth-error" role="alert">{error || authError}</p>}
+          {message && <p className="auth-message auth-success" role="status">{message}</p>}
+          <p className="auth-footnote">The link expires automatically and can only access clients assigned to your account.</p>
+        </form>
       </section>
     </main>
   );
@@ -515,12 +509,12 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
   const [issueTx, setIssueTx] = useState<Transaction | null>(null);
   const availableClients = state.clientDirectory.map((client) => client.clientName);
   const [clientName, setClientName] = useState(
-    state.currentUser?.clientName ?? availableClients[0] ?? "Meyer Vervoer",
+    state.currentUser?.clientName ?? availableClients[0] ?? "",
   );
   const customer = state.customers.find((item) => item.clientName === clientName);
   const customerTx = state.transactions.filter((tx) => tx.clientName === clientName);
   const months = Array.from(new Set(customerTx.map((tx) => monthKey(tx.createdAt)).filter(Boolean))).sort().reverse();
-  const [selectedMonth, setSelectedMonth] = useState(months[0] ?? "2026-05");
+  const [selectedMonth, setSelectedMonth] = useState(months[0] ?? "");
 
   useEffect(() => {
     if (months.length > 0 && !months.includes(selectedMonth)) {
@@ -738,8 +732,8 @@ function AdminLayout({
   state: AppState;
   update: (next: Partial<AppState>) => void;
   logout: () => void;
-  signedInUser: DemoUser | null;
-  previewAs: (user: DemoUser) => void;
+  signedInUser: PortalUser | null;
+  previewAs: (user: PortalUser) => void;
   exitPreview?: () => void;
 }) {
   const location = useLocation();
@@ -754,7 +748,7 @@ function AdminLayout({
   const canPreviewUsers = isSuperAdminRole(signedInUser?.role);
   const previewUsers = state.customers
     .filter((customer) => customer.email !== signedInUser?.email)
-    .map<DemoUser>((customer) => ({
+    .map<PortalUser>((customer) => ({
       id: customer.id,
       email: customer.email,
       displayName: customer.displayName,
@@ -908,7 +902,21 @@ function AdminLayout({
         <Routes>
           <Route index element={<Dashboard state={state} />} />
           <Route path="transactions" element={canManageTransactions ? <TransactionsAdmin state={state} update={update} /> : <Navigate to="/admin" replace />} />
-          <Route path="customers" element={canManageUsers ? <CustomersAdmin state={state} update={update} /> : <Navigate to="/admin" replace />} />
+          <Route
+            path="customers"
+            element={
+              canManageUsers ? (
+                <CustomersAdmin
+                  state={state}
+                  update={update}
+                  canPreviewUsers={canPreviewUsers}
+                  previewAs={previewAs}
+                />
+              ) : (
+                <Navigate to="/admin" replace />
+              )
+            }
+          />
           <Route path="issues" element={canManageSupport ? <IssuesAdmin state={state} update={update} /> : <Navigate to="/admin" replace />} />
           <Route path="help" element={<Navigate to="/admin" replace />} />
           <Route path="activity-log" element={canViewActivityLog ? <ActivityLogPage state={state} /> : <Navigate to="/admin" replace />} />
@@ -1155,7 +1163,18 @@ function ImportHistoryDialog({ batches, onClose }: { batches: ImportBatch[]; onC
   return <Modal title="Import History" onClose={onClose} wide><div className="table-card compact"><table><thead><tr><th>File</th><th>Imported At</th><th>Imported By</th><th>Rows</th><th>Imported</th></tr></thead><tbody>{batches.map((batch) => <tr key={batch.id}><td>{batch.filename}</td><td>{dateTime(batch.importedAt)}</td><td>{batch.importedBy}</td><td>{batch.rowsInFile}</td><td>{batch.imported}</td></tr>)}</tbody></table></div></Modal>;
 }
 
-function CustomersAdmin({ state, update }: { state: AppState; update: (next: Partial<AppState>) => void }) {
+function CustomersAdmin({
+  state,
+  update,
+  canPreviewUsers,
+  previewAs,
+}: {
+  state: AppState;
+  update: (next: Partial<AppState>) => void;
+  canPreviewUsers: boolean;
+  previewAs: (user: PortalUser) => void;
+}) {
+  const navigate = useNavigate();
   const [editing, setEditing] = useState<Customer | "new" | null>(null);
   const [clientImportOpen, setClientImportOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -1225,7 +1244,29 @@ function CustomersAdmin({ state, update }: { state: AppState; update: (next: Par
                 <td>{customer.displayName}</td>
                 <td><StatusBadge status={customer.role} /></td>
                 <td><span className="access-summary">{summarizePermissions(customer)}</span></td>
-                <td><IconButton label="Edit" onClick={() => setEditing(customer)}><Pencil size={16} /></IconButton><IconButton label="Delete" danger onClick={() => update({ customers: state.customers.filter((item) => item.id !== customer.id) })}><Trash2 size={16} /></IconButton></td>
+                <td>
+                  <div className="table-actions">
+                    {canPreviewUsers && (
+                      <IconButton
+                        label={`Preview as ${customer.displayName}`}
+                        onClick={() => {
+                          previewAs({
+                            id: customer.id,
+                            email: customer.email,
+                            displayName: customer.displayName,
+                            role: customer.role,
+                            clientName: customer.role === "customer" ? customer.clientName : undefined,
+                          });
+                          navigate(customer.role === "customer" ? "/statement" : "/admin");
+                        }}
+                      >
+                        <Eye size={16} />
+                      </IconButton>
+                    )}
+                    <IconButton label="Edit" onClick={() => setEditing(customer)}><Pencil size={16} /></IconButton>
+                    <IconButton label="Delete" danger onClick={() => update({ customers: state.customers.filter((item) => item.id !== customer.id) })}><Trash2 size={16} /></IconButton>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>

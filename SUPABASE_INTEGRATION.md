@@ -112,11 +112,15 @@ Create `.env.local` beside `package.json`:
 ```dotenv
 VITE_SUPABASE_URL=https://your-project-ref.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your-key
-VITE_DATA_SOURCE=supabase
 ```
 
 Use only browser-safe values in `VITE_` variables. Production and Vercel should
-use `VITE_DATA_SOURCE=supabase`; set it to `demo` only for local mock-data work.
+define both variables in Development, Preview, and Production. The frontend
+does not bundle a demo data source.
+
+Portal records fetched from Supabase are held in memory and are cleared on
+logout or page close. Only the Supabase authentication session uses the SDK's
+standard browser persistence.
 
 Codex MCP uses a personal access token stored outside the repository:
 

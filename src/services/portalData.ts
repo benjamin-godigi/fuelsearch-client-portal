@@ -1,5 +1,5 @@
 import type { User } from "@supabase/supabase-js";
-import type { ClientDirectoryEntry, Customer, DemoUser, Transaction, TransactionStatus } from "../types";
+import type { ClientDirectoryEntry, Customer, PortalUser, Transaction, TransactionStatus } from "../types";
 import { requireSupabase } from "../lib/supabase";
 import type { AppState } from "./store";
 
@@ -107,7 +107,7 @@ export async function loadPortalData(
 
   if (transactionError) throw transactionError;
 
-  const currentUser: DemoUser = {
+  const currentUser: PortalUser = {
     id: user.id,
     email: signedInProfile.email,
     displayName: signedInProfile.display_name,
@@ -130,17 +130,19 @@ export async function loadPortalData(
   });
 
   const clientCustomers: Customer[] = clients
-    .filter((client) => !profiles.some((profile) => profile.user_id === client.user_id))
+    .filter((client) => !profiles.some(
+      (profile) => profile.user_id === client.user_id && profile.role === "customer",
+    ))
     .map((client) => ({
-    id: String(client.id),
-    email: client.contact_email ?? user.email ?? "",
-    clientName: client.name,
-    displayName: client.contact_name ?? client.name,
-    role: "customer",
-    vatNumber: client.vat_number ?? undefined,
-    registration: client.registration_number ?? undefined,
-    address: joinAddress(client) || undefined,
-  }));
+      id: `client-${client.id}`,
+      email: client.contact_email ?? user.email ?? "",
+      clientName: client.name,
+      displayName: client.contact_name ?? client.name,
+      role: "customer",
+      vatNumber: client.vat_number ?? undefined,
+      registration: client.registration_number ?? undefined,
+      address: joinAddress(client) || undefined,
+    }));
   const customers = [...profileCustomers, ...clientCustomers];
 
   const clientDirectory: ClientDirectoryEntry[] = clients.map((client) => ({

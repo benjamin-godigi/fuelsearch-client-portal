@@ -10,7 +10,7 @@ export interface AdminPermissions {
   viewActivityLog: boolean;
 }
 
-export interface DemoUser {
+export interface PortalUser {
   id: string;
   email: string;
   displayName: string;

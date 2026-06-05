@@ -22,7 +22,8 @@ not committed.
 | --- | --- |
 | Build command | `npm run build` |
 | Output directory | `dist` |
-| Install command | `npm install` |
+| Install command | `npm ci` |
+| Node.js version | `20.x` |
 
 `vercel.json` sends application routes back to `index.html`, allowing direct
 visits to React Router paths.
@@ -34,7 +35,6 @@ Add these under **Project Settings > Environment Variables**:
 ```dotenv
 VITE_SUPABASE_URL=https://your-project-ref.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your-key
-VITE_DATA_SOURCE=supabase
 ```
 
 Use the values from **Supabase Dashboard > Connect**.
@@ -45,16 +45,24 @@ Never add any of these to Vercel frontend variables:
 - `sb_secret_...`
 - legacy `service_role` keys
 
-Use `VITE_DATA_SOURCE=supabase` in Preview and Production. Use `demo` only for
-an intentionally isolated local mock-data session.
+Set both variables for Development, Preview, and Production. Builds fail when
+either variable is absent, preventing an unusable deployment from being
+published.
 
 ## Supabase Auth URLs
 
 After Vercel assigns the production domain:
 
 1. Open **Supabase Dashboard > Authentication > URL Configuration**.
-2. Set **Site URL** to the Vercel production URL.
-3. Add `https://your-vercel-domain.vercel.app/**` to Redirect URLs.
-4. Keep `http://127.0.0.1:5173/**` for local development.
+2. Set **Site URL** to `https://fuelsearch-client-portal.vercel.app`.
+3. Add `https://fuelsearch-client-portal.vercel.app/**` to Redirect URLs.
+4. Add `https://*-benjamins-projects-fa59627f.vercel.app/**` for Vercel preview deployments.
+5. Keep `http://127.0.0.1:5173/**` for local development.
 
 Magic-link redirects must match one of these allowed URLs.
+
+## Release Checks
+
+`.github/workflows/build.yml` runs `npm ci`, TypeScript checks, and the
+production build on pull requests and pushes to `main`. Configure `main` branch
+protection in GitHub to require the **Build** check before merging.

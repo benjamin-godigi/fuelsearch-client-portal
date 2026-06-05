@@ -10,8 +10,8 @@ npm run dev
 ```
 
 Copy `example.env` to `.env.local` and add the browser-safe Supabase values.
-Use `VITE_DATA_SOURCE=supabase` for real magic-link login, or `demo` for an
-isolated mock-data session.
+The application uses Supabase exclusively; no customer or transaction fixtures
+are bundled into the frontend.
 
 ## Build
 
@@ -20,6 +20,8 @@ npm run build
 ```
 
 The production output is written to `dist/`.
+
+`npm run build` fails when either required Supabase variable is missing.
 
 ## Deployment
 
