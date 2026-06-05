@@ -1,0 +1,3 @@
+Help me configure Supabase for this Client Portal. I need a schema, magic email auth, protected user-owned data, Supabase Auth users own clients via user_id; Suggest the table columns, required foreign keys, basic RLS policies, and environment variables Codex needs. Keep the setup beginner-friendly and avoid teams, billing, advanced permissions, and direct client-owned feedback items.
+
+Note I need a super admin access for myself where can control everything without the normal admins noticing. I need a way to control what admins can do and so work out a plan to implement something like thatS
