@@ -69,14 +69,48 @@ async function depotIdForName(depotName: string) {
   return created.id as number;
 }
 
-async function transactionRow(transaction: Transaction, clientId?: number) {
+function normalizedDepotName(depotName: string) {
+  return depotName.trim().toLowerCase();
+}
+
+async function depotIdsForNames(depotNames: string[]) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.from("depots").select("id, name");
+  if (error) throw error;
+
+  const idsByName = new Map(
+    (data ?? []).map((depot) => [normalizedDepotName(String(depot.name)), depot.id as number]),
+  );
+  const missingDepots = [...new Map(
+    depotNames
+      .map((name) => name.trim())
+      .filter((name) => name && name !== "Unassigned depot")
+      .filter((name) => !idsByName.has(normalizedDepotName(name)))
+      .map((name) => [normalizedDepotName(name), name]),
+  ).values()];
+
+  if (missingDepots.length > 0) {
+    const { data: created, error: insertError } = await supabase
+      .from("depots")
+      .insert(missingDepots.map((name) => ({ name })))
+      .select("id, name");
+    if (insertError) throw insertError;
+    for (const depot of created ?? []) {
+      idsByName.set(normalizedDepotName(String(depot.name)), depot.id as number);
+    }
+  }
+
+  return idsByName;
+}
+
+async function transactionRow(transaction: Transaction, clientId?: number, depotId?: number | null) {
   const resolvedClientId = clientId ?? (await clientIdsForNames([transaction.clientName]))
     .get(normalizedClientName(transaction.clientName));
   if (!resolvedClientId) throw new Error(`Could not create or find client "${transaction.clientName}".`);
 
   return {
     client_id: resolvedClientId,
-    depot_id: await depotIdForName(transaction.depot),
+    depot_id: depotId === undefined ? await depotIdForName(transaction.depot) : depotId,
     order_number: transaction.order.trim(),
     status: transaction.status,
     vehicle_registration: transaction.vehicle.trim() || null,
@@ -116,20 +150,35 @@ export async function deleteTransaction(transactionId: string) {
   if (error) throw error;
 }
 
-export async function importTransactions(transactions: Transaction[], batch: ImportBatch) {
+export async function importTransactions(
+  transactions: Transaction[],
+  batch: ImportBatch,
+  onProgress?: (processed: number, total: number) => void,
+) {
   const clientIds = await clientIdsForNames(transactions.map((transaction) => transaction.clientName));
-  const rows = [];
-  for (const transaction of transactions) {
+  const depotIds = await depotIdsForNames(transactions.map((transaction) => transaction.depot));
+  const rows = await Promise.all(transactions.map((transaction) => {
     const clientId = clientIds.get(normalizedClientName(transaction.clientName));
-    rows.push(await transactionRow(transaction, clientId));
-  }
+    const depotId = depotIds.get(normalizedDepotName(transaction.depot)) ?? null;
+    return transactionRow(transaction, clientId, depotId);
+  }));
 
   const supabase = requireSupabase();
-  const { data: importedRows, error: transactionError } = await supabase
-    .from("transactions")
-    .upsert(rows, { onConflict: "order_number" })
-    .select("id, order_number");
-  if (transactionError) throw transactionError;
+  const importedRows: Array<{ id: number; order_number: string }> = [];
+  const chunkSize = 250;
+  onProgress?.(0, rows.length);
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    const chunk = rows.slice(index, index + chunkSize);
+    const { data, error: transactionError } = await supabase
+      .from("transactions")
+      .upsert(chunk, { onConflict: "order_number" })
+      .select("id, order_number");
+    if (transactionError) {
+      throw new Error(`Import stopped after ${index.toLocaleString()} rows: ${transactionError.message}`);
+    }
+    importedRows.push(...((data ?? []) as Array<{ id: number; order_number: string }>));
+    onProgress?.(Math.min(index + chunk.length, rows.length), rows.length);
+  }
 
   const user = await currentUser();
   const { error: batchError } = await supabase.from("import_batches").insert({
@@ -151,6 +200,14 @@ export async function importTransactions(transactions: Transaction[], batch: Imp
     ...transaction,
     id: idsByOrder.get(transaction.order) ?? transaction.id,
   }));
+}
+
+export async function resetTransactions() {
+  const { error } = await requireSupabase()
+    .from("transactions")
+    .delete()
+    .gte("id", 0);
+  if (error) throw error;
 }
 
 export async function createIssue(issue: Issue) {

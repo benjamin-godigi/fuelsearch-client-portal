@@ -155,15 +155,21 @@ export async function loadPortalData(
     throw new Error("Your login is valid, but no active client account is linked to it yet.");
   }
 
-  const { data: transactionData, error: transactionError } = await supabase
-    .from("transactions")
-    .select(
-      "id, order_number, status, vehicle_registration, driver_name, odometer_km, requested_litres, filled_litres, parking_nights, parking_fee, fuel_price_per_litre, total_amount, ordered_at, completed_at, expires_at, notes, clients(name), depots(name)",
-    )
-    .in("client_id", clients.map((client) => client.id).length ? clients.map((client) => client.id) : [-1])
-    .order("ordered_at", { ascending: false });
-
-  if (transactionError) throw transactionError;
+  const transactionData: TransactionRow[] = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data: page, error: transactionError } = await supabase
+      .from("transactions")
+      .select(
+        "id, order_number, status, vehicle_registration, driver_name, odometer_km, requested_litres, filled_litres, parking_nights, parking_fee, fuel_price_per_litre, total_amount, ordered_at, completed_at, expires_at, notes, clients(name), depots(name)",
+      )
+      .in("client_id", clients.map((client) => client.id).length ? clients.map((client) => client.id) : [-1])
+      .order("ordered_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (transactionError) throw transactionError;
+    transactionData.push(...((page ?? []) as TransactionRow[]));
+    if ((page?.length ?? 0) < pageSize) break;
+  }
 
   const [{ data: issueData, error: issueError }, { data: activityData, error: activityError }, { data: importData, error: importError }] = await Promise.all([
     supabase
@@ -209,21 +215,7 @@ export async function loadPortalData(
     };
   });
 
-  const clientCustomers: Customer[] = clients
-    .filter((client) => !profiles.some(
-      (profile) => profile.user_id === client.user_id && profile.role === "customer",
-    ))
-    .map((client) => ({
-      id: `client-${client.id}`,
-      email: client.contact_email ?? user.email ?? "",
-      clientName: client.name,
-      displayName: client.contact_name ?? client.name,
-      role: "customer",
-      vatNumber: client.vat_number ?? undefined,
-      registration: client.registration_number ?? undefined,
-      address: joinAddress(client) || undefined,
-    }));
-  const customers = [...profileCustomers, ...clientCustomers];
+  const customers = profileCustomers;
 
   const clientDirectory: ClientDirectoryEntry[] = clients.map((client) => ({
     id: String(client.id),
@@ -235,7 +227,7 @@ export async function loadPortalData(
     createdAt: client.created_at,
   }));
 
-  const transactions: Transaction[] = ((transactionData ?? []) as TransactionRow[]).map((transaction) => ({
+  const transactions: Transaction[] = transactionData.map((transaction) => ({
     id: String(transaction.id),
     order: transaction.order_number,
     clientName: String(relationValue(transaction.clients, "name") ?? ""),

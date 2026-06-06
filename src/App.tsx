@@ -52,6 +52,7 @@ import {
   createIssue,
   deleteTransaction,
   importTransactions,
+  resetTransactions,
   saveTransaction,
   updateIssue,
   writeActivityLog,
@@ -1073,6 +1074,7 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
   const [viewing, setViewing] = useState<Transaction | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const [operationError, setOperationError] = useState("");
   const filtered = state.transactions
     .filter((tx) => {
@@ -1110,9 +1112,20 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
       setOperationError(error instanceof Error ? error.message : "Could not delete the transaction.");
     }
   };
+  const resetAllTransactions = async () => {
+    setOperationError("");
+    try {
+      await resetTransactions();
+      update({ transactions: [] });
+      void writeActivityLog("Reset transactions", "Deleted all transaction records").catch(() => undefined);
+      setResetOpen(false);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Could not reset transactions.");
+    }
+  };
   return (
     <div className="page-stack">
-      <div className="page-title-row"><h1>Transactions</h1><div className="row-actions"><button className="button outline" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button><button className="button outline" onClick={() => setHistoryOpen(true)}><History size={16} /> Import History</button><button className="button primary" onClick={() => setEditing("new")}><Plus size={16} /> Add Manually</button></div></div>
+      <div className="page-title-row"><h1>Transactions</h1><div className="row-actions"><button className="button outline" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button><button className="button outline" onClick={() => downloadCsv(state.transactions, "fuelsearch-transactions.csv")}><Download size={16} /> Export</button><button className="button outline" onClick={() => setHistoryOpen(true)}><History size={16} /> Import History</button><button className="button outline danger" onClick={() => setResetOpen(true)}><Trash2 size={16} /> Reset</button><button className="button primary" onClick={() => setEditing("new")}><Plus size={16} /> Add Manually</button></div></div>
       {operationError && <p className="auth-message auth-error" role="alert">{operationError}</p>}
       <div className="filters"><label><Search size={16} /><input placeholder="Search client..." value={search} onChange={(event) => setSearch(event.target.value)} /></label><select value={status} onChange={(event) => setStatus(event.target.value as TransactionStatus | "All")}><option>All</option>{STATUSES.map((item) => <option key={item}>{item}</option>)}</select><input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><span>→</span><input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></div>
       <div className="table-card">
@@ -1136,6 +1149,7 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
       {viewing && <TransactionDetailsModal tx={viewing} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setViewing(null); }} />}
       {importOpen && <ImportDialog state={state} update={update} onClose={() => setImportOpen(false)} onError={setOperationError} />}
       {historyOpen && <ImportHistoryDialog batches={state.importBatches} onClose={() => setHistoryOpen(false)} />}
+      {resetOpen && <ResetTransactionsDialog count={state.transactions.length} onClose={() => setResetOpen(false)} onReset={resetAllTransactions} />}
     </div>
   );
 }
@@ -1254,6 +1268,8 @@ function ImportDialog({ state, update, onClose, onError }: { state: AppState; up
   const [filename, setFilename] = useState("");
   const [rows, setRows] = useState<Transaction[]>([]);
   const [message, setMessage] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [processed, setProcessed] = useState(0);
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -1262,25 +1278,56 @@ function ImportDialog({ state, update, onClose, onError }: { state: AppState; up
     setRows(mapImportRows(rawRows));
   };
   const commit = async () => {
+    if (importing) return;
     const orders = new Set(rows.map((tx) => tx.order));
     const preserved = state.transactions.filter((tx) => !orders.has(tx.order));
     const actorEmail = state.currentUser?.email ?? "unknown";
     const batch: ImportBatch = { id: makeId("batch"), filename, importedAt: new Date().toISOString(), importedBy: actorEmail, rowsInFile: rows.length, imported: rows.length, skipped: 0, droppedInParser: 0, orderNumbers: rows.map((tx) => tx.order) };
     onError("");
+    setMessage("");
+    setProcessed(0);
+    setImporting(true);
     try {
-      const savedRows = await importTransactions(rows, batch);
+      const savedRows = await importTransactions(rows, batch, (completed) => setProcessed(completed));
       void writeActivityLog("Imported transactions", `${rows.length} rows imported from ${filename}`).catch(() => undefined);
       update({ transactions: [...savedRows, ...preserved], importBatches: [batch, ...state.importBatches], activityLogs: [{ id: makeId("activity"), action: "Imported transactions", adminEmail: actorEmail, details: `${rows.length} rows imported from ${filename}`, performedAt: new Date().toISOString() }, ...state.activityLogs] });
       setMessage(`Import complete - ${rows.length} records processed by Order #.`);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Could not import the transactions.");
+    } finally {
+      setImporting(false);
+    }
+  };
+  const progress = rows.length > 0 ? Math.round((processed / rows.length) * 100) : 0;
+  return (
+    <Modal title="Import Transactions" onClose={onClose} wide>
+      <div className="import-drop"><Upload size={28} /><strong>Choose the FuelSearch export</strong><p>Supports .xlsx, .xls, and .csv. Existing records are replaced by Order #.</p><input type="file" accept=".xlsx,.xls,.csv" disabled={importing} onChange={handleFile} /></div>
+      {rows.length > 0 && <div className="table-card compact"><div className="section-head"><div><h2>{filename}</h2><p>{rows.length.toLocaleString()} valid rows detected. Previewing first 5 rows.</p></div><button className="button primary" disabled={importing} onClick={() => void commit()}>{importing ? `Importing ${progress}%` : `Import ${rows.length.toLocaleString()} Rows`}</button></div>{importing && <div className="import-progress" role="status" aria-live="polite"><div className="import-progress-copy"><strong>Import in progress</strong><span>{processed.toLocaleString()} of {rows.length.toLocaleString()} rows ({progress}%)</span></div><div className="import-progress-track"><span style={{ width: `${progress}%` }} /></div><p>Keep this window open until the import is complete.</p></div>}<SimpleTxTable transactions={rows.slice(0, 5)} /></div>}
+      {message && <p className="success-note"><CheckCircle2 size={16} /> {message}</p>}
+    </Modal>
+  );
+}
+
+function ResetTransactionsDialog({ count, onClose, onReset }: { count: number; onClose: () => void; onReset: () => Promise<void> }) {
+  const [confirmation, setConfirmation] = useState("");
+  const [resetting, setResetting] = useState(false);
+  const confirmReset = async () => {
+    setResetting(true);
+    try {
+      await onReset();
+    } finally {
+      setResetting(false);
     }
   };
   return (
-    <Modal title="Import Transactions" onClose={onClose} wide>
-      <div className="import-drop"><Upload size={28} /><strong>Choose the FuelSearch export</strong><p>Supports .xlsx, .xls, and .csv. Existing records are replaced by Order #.</p><input type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} /></div>
-      {rows.length > 0 && <div className="table-card compact"><div className="section-head"><div><h2>{filename}</h2><p>{rows.length} valid rows detected. Previewing first 5 rows.</p></div><button className="button primary" onClick={() => void commit()}>Import {rows.length} Rows</button></div><SimpleTxTable transactions={rows.slice(0, 5)} /></div>}
-      {message && <p className="success-note"><CheckCircle2 size={16} /> {message}</p>}
+    <Modal title="Reset Transaction Records" onClose={onClose}>
+      <div className="danger-confirmation">
+        <AlertCircle size={24} />
+        <h2>Delete all {count.toLocaleString()} transactions?</h2>
+        <p>This cannot be undone. Export a backup first if these records may be needed.</p>
+        <label>Type <strong>DELETE</strong> to confirm<input value={confirmation} disabled={resetting} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" /></label>
+        <div className="modal-actions"><button className="button outline" disabled={resetting} onClick={onClose}>Cancel</button><button className="button primary" disabled={confirmation !== "DELETE" || resetting} onClick={() => void confirmReset()}>{resetting ? "Deleting..." : "Delete All Transactions"}</button></div>
+      </div>
     </Modal>
   );
 }
@@ -1736,14 +1783,14 @@ function ActivityLogPage({ state }: { state: AppState }) {
   return <div className="page-stack"><h1>Activity Log</h1><div className="table-card"><table><thead><tr><th>Action</th><th>Admin</th><th>Details</th><th>Performed At</th></tr></thead><tbody>{state.activityLogs.map((log) => <tr key={log.id}><td>{log.action}</td><td>{log.adminEmail}</td><td>{log.details}</td><td>{dateTime(log.performedAt)}</td></tr>)}</tbody></table></div></div>;
 }
 
-function downloadCsv(rows: Transaction[]) {
+function downloadCsv(rows: Transaction[], filename = "fuelsearch-statement.csv") {
   const headers = ["Order #", "Client", "Depot", "Vehicle", "Status", "Filled Fuel (L)", "Fuel Price (per L)", "Total Price", "Created At"];
   const body = rows.map((tx) => [tx.order, tx.clientName, tx.depot, tx.vehicle, tx.status, tx.filledFuelL ?? "", tx.fuelPricePerL ?? "", tx.totalPrice, tx.createdAt].map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","));
   const blob = new Blob([[headers.join(","), ...body].join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = "fuelsearch-statement.csv";
+  anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
 }
