@@ -13,6 +13,7 @@ import {
   Bell,
   Download,
   Eye,
+  EyeOff,
   FileText,
   Gauge,
   History,
@@ -56,6 +57,7 @@ import {
   saveTransaction,
   updateIssue,
   writeActivityLog,
+  markIssueSeen,
 } from "./services/portalOperations";
 
 const LOGO_URL = "https://fuelsearch.co.za/wp-content/uploads/Logo.svg";
@@ -459,6 +461,7 @@ function LoginPage({ authError, clearAuthError }: { authError: string; clearAuth
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const submitCredentials = async (event: FormEvent) => {
     event.preventDefault();
@@ -505,14 +508,7 @@ function LoginPage({ authError, clearAuthError }: { authError: string; clearAuth
             required
           />
           <label htmlFor="portal-password">Password</label>
-          <input
-            id="portal-password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
+          <div className="password-field"><input id="portal-password" type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="button" className="password-toggle" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
           <button className="button primary auth-submit" type="submit" disabled={submitting}>
             <KeyRound size={18} />
             {submitting ? "Signing in..." : "Sign in"}
@@ -532,6 +528,7 @@ function RequiredPasswordChangePage({ onComplete }: { onComplete: () => void }) 
   const [confirmation, setConfirmation] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const savePassword = async (event: FormEvent) => {
     event.preventDefault();
@@ -567,19 +564,11 @@ function RequiredPasswordChangePage({ onComplete }: { onComplete: () => void }) 
         <form className="auth-form" onSubmit={savePassword}>
           <input type="text" name="username" autoComplete="username" hidden />
           <label htmlFor="required-new-password">New password</label>
-          <input
-            id="required-new-password"
-            type="password"
-            autoComplete="new-password"
-            minLength={12}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
+          <div className="password-field"><input id="required-new-password" type={showPassword ? "text" : "password"} autoComplete="new-password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="button" className="password-toggle" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
           <label htmlFor="required-confirm-password">Confirm new password</label>
           <input
             id="required-confirm-password"
-            type="password"
+            type={showPassword ? "text" : "password"}
             autoComplete="new-password"
             minLength={12}
             value={confirmation}
@@ -603,6 +592,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
   const [invoiceTx, setInvoiceTx] = useState<Transaction | null>(null);
   const [issueTx, setIssueTx] = useState<Transaction | null>(null);
   const [issueError, setIssueError] = useState("");
+  const [requestsOpen, setRequestsOpen] = useState(false);
   const availableClients = state.clientDirectory.map((client) => client.clientName);
   const [clientName, setClientName] = useState(
     state.currentUser?.clientName ?? availableClients[0] ?? "",
@@ -633,6 +623,12 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
   const completed = monthTx.filter((tx) => tx.status === "Completed");
   const totalLitres = completed.reduce((sum, tx) => sum + (tx.filledFuelL ?? 0), 0);
   const totalAmount = completed.reduce((sum, tx) => sum + tx.totalPrice, 0);
+  const customerIssues = state.issues.filter((issue) => issue.source === "Customer Statement");
+  const unreadIssueUpdates = customerIssues.filter((issue) =>
+    issue.customerUpdateAt && (!issue.customerSeenAt || issue.customerUpdateAt > issue.customerSeenAt),
+  );
+  const currentMonth = selectedMonth === monthKey(new Date().toISOString());
+  const periodLabel = currentMonth ? `${monthLabel(selectedMonth)} Month-to-Date` : monthLabel(selectedMonth);
 
   const reportIssue = async (payload: { title: string; description: string; category: string; priority: IssuePriority; orderRef?: string }) => {
     const now = new Date().toISOString();
@@ -685,14 +681,18 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
               <p>Statement of Account</p>
             </div>
           </div>
+          <button className="button outline notification-button" onClick={() => setRequestsOpen(true)}>
+            <MessageSquarePlus size={16} /> My Requests
+            {unreadIssueUpdates.length > 0 && <span className="notification-badge">{unreadIssueUpdates.length}</span>}
+          </button>
           <button className="button outline" onClick={() => setIssueTx({ ...monthTx[0], order: "" })}>
             <LifeBuoy size={16} /> Support & Requests
           </button>
         </div>
         <div className="summary-grid">
-          <SummaryCard icon={<Gauge />} label={`Litres - ${monthLabel(selectedMonth)}`} value={`${number(totalLitres)} L`} />
-          <SummaryCard icon={<FileText />} label={`Total - ${monthLabel(selectedMonth)}`} value={money(totalAmount)} />
-          <SummaryCard icon={<ClipboardList />} label={`Orders - ${monthLabel(selectedMonth)}`} value={String(completed.length)} />
+          <SummaryCard icon={<Gauge />} label={`Litres - ${periodLabel}`} value={`${number(totalLitres)} L`} />
+          <SummaryCard icon={<FileText />} label={`Total - ${periodLabel}`} value={money(totalAmount)} />
+          <SummaryCard icon={<ClipboardList />} label={`Orders - ${periodLabel}`} value={String(completed.length)} />
         </div>
         <div className="toolbar">
           <select value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}>
@@ -701,7 +701,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
           <button className="button outline" onClick={() => setSort((value) => (value === "newest" ? "oldest" : "newest"))}>
             <ArrowDownUp size={16} /> {sort === "newest" ? "Newest first" : "Oldest first"}
           </button>
-          <button className="button outline push-right" onClick={() => downloadCsv(shown)}>
+          <button className="button outline push-right" onClick={() => downloadStatementCsv(monthTx, clientName, selectedMonth, currentMonth)}>
             <Download size={16} /> Download CSV Statement
           </button>
         </div>
@@ -747,6 +747,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
       {invoiceTx && <InvoiceModal tx={invoiceTx} customer={customer} onClose={() => setInvoiceTx(null)} onReport={() => setIssueTx(invoiceTx)} />}
       {issueError && <p className="auth-message auth-error statement-action-error" role="alert">{issueError}</p>}
       {issueTx && <IssueDialog tx={issueTx.order ? issueTx : undefined} onClose={() => setIssueTx(null)} onSubmit={(payload) => void reportIssue(payload)} />}
+      {requestsOpen && <CustomerRequestsDialog issues={customerIssues} onClose={() => setRequestsOpen(false)} onSeen={async (issue) => { await markIssueSeen(issue.id); update({ issues: state.issues.map((item) => item.id === issue.id ? { ...item, customerSeenAt: new Date().toISOString() } : item) }); }} />}
     </main>
   );
 }
@@ -768,7 +769,8 @@ function InvoiceModal({ tx, customer, onClose, onReport }: { tx: Transaction; cu
     <Modal title={`Invoice #${invoiceNumber}`} onClose={onClose} wide>
       <div className="invoice-toolbar">
         <button className="button outline danger" onClick={onReport}><LifeBuoy size={16} /> Get Support</button>
-        <button className="button primary" onClick={() => window.print()}><Download size={16} /> Download PDF</button>
+        <button className="button outline" onClick={() => window.print()}><FileText size={16} /> Print</button>
+        <button className="button primary" onClick={() => void downloadInvoicePdf(tx, customer)}><Download size={16} /> Download PDF</button>
       </div>
       <div className="invoice-paper">
         <header className="invoice-head">
@@ -816,6 +818,28 @@ function IssueDialog({ tx, onClose, onSubmit }: { tx?: Transaction; onClose: () 
         <label>Details<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} placeholder="Include what happened, what you expected, or what you would like added or changed." required /></label>
         <div className="modal-actions"><button className="button outline" type="button" onClick={onClose}>Cancel</button><button className="button primary" type="submit">Submit Request</button></div>
       </form>
+    </Modal>
+  );
+}
+
+function CustomerRequestsDialog({ issues, onClose, onSeen }: { issues: Issue[]; onClose: () => void; onSeen: (issue: Issue) => Promise<void> }) {
+  const sorted = [...issues].sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt));
+  return (
+    <Modal title="My Support Requests" onClose={onClose} wide>
+      <div className="customer-requests">
+        {sorted.map((issue) => {
+          const unread = Boolean(issue.customerUpdateAt && (!issue.customerSeenAt || issue.customerUpdateAt > issue.customerSeenAt));
+          return (
+            <article className={`customer-request ${unread ? "unread" : ""}`} key={issue.id}>
+              <div className="customer-request-head"><div><h3>{issue.title}</h3><p>Submitted {dateTime(issue.loggedAt)}{issue.orderRef ? ` · Order ${issue.orderRef}` : ""}</p></div><StatusBadge status={issue.status} /></div>
+              <p>{issue.description}</p>
+              {issue.resolutionNotes && <div className="request-response"><strong>FuelSearch update</strong><p>{issue.resolutionNotes}</p></div>}
+              <footer><span>Priority: {issue.priority} · Updated {dateTime(issue.updatedAt)}</span>{unread && <button className="mini-button" onClick={() => void onSeen(issue)}>Mark as read</button>}</footer>
+            </article>
+          );
+        })}
+        {sorted.length === 0 && <div className="empty-support"><LifeBuoy size={24} /><strong>No requests yet</strong><span>Your reported problems and their progress will appear here.</span></div>}
+      </div>
     </Modal>
   );
 }
@@ -1076,6 +1100,7 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [operationError, setOperationError] = useState("");
+  const [operationSuccess, setOperationSuccess] = useState("");
   const filtered = state.transactions
     .filter((tx) => {
       const created = tx.createdAt.slice(0, 10);
@@ -1127,6 +1152,7 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
     <div className="page-stack">
       <div className="page-title-row"><h1>Transactions</h1><div className="row-actions"><button className="button outline" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button><button className="button outline" onClick={() => downloadCsv(state.transactions, "fuelsearch-transactions.csv")}><Download size={16} /> Export</button><button className="button outline" onClick={() => setHistoryOpen(true)}><History size={16} /> Import History</button><button className="button outline danger" onClick={() => setResetOpen(true)}><Trash2 size={16} /> Reset</button><button className="button primary" onClick={() => setEditing("new")}><Plus size={16} /> Add Manually</button></div></div>
       {operationError && <p className="auth-message auth-error" role="alert">{operationError}</p>}
+      {operationSuccess && <p className="auth-message auth-success" role="status">{operationSuccess}</p>}
       <div className="filters"><label><Search size={16} /><input placeholder="Search client..." value={search} onChange={(event) => setSearch(event.target.value)} /></label><select value={status} onChange={(event) => setStatus(event.target.value as TransactionStatus | "All")}><option>All</option>{STATUSES.map((item) => <option key={item}>{item}</option>)}</select><input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><span>→</span><input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></div>
       <div className="table-card">
         <table>
@@ -1147,7 +1173,7 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
       </div>
       {editing && <TransactionForm tx={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSave={(tx) => void saveTx(tx)} />}
       {viewing && <TransactionDetailsModal tx={viewing} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setViewing(null); }} />}
-      {importOpen && <ImportDialog state={state} update={update} onClose={() => setImportOpen(false)} onError={setOperationError} />}
+      {importOpen && <ImportDialog state={state} update={update} onClose={() => setImportOpen(false)} onError={setOperationError} onComplete={(message) => { setImportOpen(false); setOperationSuccess(message); }} />}
       {historyOpen && <ImportHistoryDialog batches={state.importBatches} onClose={() => setHistoryOpen(false)} />}
       {resetOpen && <ResetTransactionsDialog count={state.transactions.length} onClose={() => setResetOpen(false)} onReset={resetAllTransactions} />}
     </div>
@@ -1264,7 +1290,7 @@ function TransactionForm({ tx, onClose, onSave }: { tx?: Transaction; onClose: (
   );
 }
 
-function ImportDialog({ state, update, onClose, onError }: { state: AppState; update: (next: Partial<AppState>) => void; onClose: () => void; onError: (message: string) => void }) {
+function ImportDialog({ state, update, onClose, onError, onComplete }: { state: AppState; update: (next: Partial<AppState>) => void; onClose: () => void; onError: (message: string) => void; onComplete: (message: string) => void }) {
   const [filename, setFilename] = useState("");
   const [rows, setRows] = useState<Transaction[]>([]);
   const [message, setMessage] = useState("");
@@ -1291,7 +1317,7 @@ function ImportDialog({ state, update, onClose, onError }: { state: AppState; up
       const savedRows = await importTransactions(rows, batch, (completed) => setProcessed(completed));
       void writeActivityLog("Imported transactions", `${rows.length} rows imported from ${filename}`).catch(() => undefined);
       update({ transactions: [...savedRows, ...preserved], importBatches: [batch, ...state.importBatches], activityLogs: [{ id: makeId("activity"), action: "Imported transactions", adminEmail: actorEmail, details: `${rows.length} rows imported from ${filename}`, performedAt: new Date().toISOString() }, ...state.activityLogs] });
-      setMessage(`Import complete - ${rows.length} records processed by Order #.`);
+      onComplete(`Import complete: ${rows.length.toLocaleString()} rows processed from ${filename}.`);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Could not import the transactions.");
     } finally {
@@ -1352,6 +1378,7 @@ function CustomersAdmin({
   const [search, setSearch] = useState("");
   const [userError, setUserError] = useState("");
   const [temporaryCredentials, setTemporaryCredentials] = useState<{ email: string; password: string } | null>(null);
+  const [credentialsCopied, setCredentialsCopied] = useState(false);
   const currentAdmin = getSignedInAdmin(state);
   const allowSuperAdmin = isSuperAdminRole(currentAdmin?.role);
   const visibleCustomers = useMemo(
@@ -1394,6 +1421,7 @@ function CustomersAdmin({
           throw new Error("The user was created without temporary credentials.");
         }
         normalized.id = result.user.id;
+        setCredentialsCopied(false);
         setTemporaryCredentials({
           email: normalized.email,
           password: result.temporaryPassword,
@@ -1512,11 +1540,9 @@ function CustomersAdmin({
               <button
                 className="button outline"
                 type="button"
-                onClick={() => void navigator.clipboard.writeText(
-                  `FuelSearch portal\nEmail: ${temporaryCredentials.email}\nTemporary password: ${temporaryCredentials.password}`,
-                )}
+                onClick={() => void navigator.clipboard.writeText(`FuelSearch portal\nEmail: ${temporaryCredentials.email}\nTemporary password: ${temporaryCredentials.password}`).then(() => setCredentialsCopied(true))}
               >
-                Copy credentials
+                {credentialsCopied ? <><CheckCircle2 size={16} /> Credentials copied</> : "Copy credentials"}
               </button>
               <button className="button primary" type="button" onClick={() => setTemporaryCredentials(null)}>Done</button>
             </div>
@@ -1572,6 +1598,7 @@ function CustomerForm({ customer, clientDirectory, allowSuperAdmin, onClose, onS
       clientName,
       displayName: client?.contactPerson ?? current.displayName,
       address: client?.address ?? current.address,
+      clientId: client?.id,
     }));
   };
   return (
@@ -1783,16 +1810,144 @@ function ActivityLogPage({ state }: { state: AppState }) {
   return <div className="page-stack"><h1>Activity Log</h1><div className="table-card"><table><thead><tr><th>Action</th><th>Admin</th><th>Details</th><th>Performed At</th></tr></thead><tbody>{state.activityLogs.map((log) => <tr key={log.id}><td>{log.action}</td><td>{log.adminEmail}</td><td>{log.details}</td><td>{dateTime(log.performedAt)}</td></tr>)}</tbody></table></div></div>;
 }
 
-function downloadCsv(rows: Transaction[], filename = "fuelsearch-statement.csv") {
+function downloadCsv(rows: Transaction[], filename = "fuelsearch-statement.csv", preamble: string[] = []) {
   const headers = ["Order #", "Client", "Depot", "Vehicle", "Status", "Filled Fuel (L)", "Fuel Price (per L)", "Total Price", "Created At"];
   const body = rows.map((tx) => [tx.order, tx.clientName, tx.depot, tx.vehicle, tx.status, tx.filledFuelL ?? "", tx.fuelPricePerL ?? "", tx.totalPrice, tx.createdAt].map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","));
-  const blob = new Blob([[headers.join(","), ...body].join("\n")], { type: "text/csv" });
+  const blob = new Blob([[...preamble, headers.join(","), ...body].join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function safeFilename(value: string) {
+  return value.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+}
+
+function downloadStatementCsv(rows: Transaction[], clientName: string, selectedMonth: string, monthToDate: boolean) {
+  const [year, month] = selectedMonth.split("-");
+  const period = monthToDate ? `${year}-${month}-month-to-date-as-at-${new Date().toISOString().slice(0, 10)}` : `${year}-${month}`;
+  const asAt = new Date().toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+  downloadCsv(
+    rows,
+    `FuelSearch_${safeFilename(clientName)}_Statement_${period}.csv`,
+    [
+      `"FuelSearch Statement","${clientName.replace(/"/g, '""')}"`,
+      `"Period","${monthToDate ? `${monthLabel(selectedMonth)} Month-to-Date` : monthLabel(selectedMonth)}"`,
+      `"As at","${asAt}"`,
+      "",
+    ],
+  );
+}
+
+async function downloadInvoicePdf(tx: Transaction, customer?: Customer) {
+  const { jsPDF } = await import("jspdf");
+  const pdf = new jsPDF({ unit: "mm", format: "a4" });
+  const navy = [31, 68, 103] as const;
+  const invoiceNumber = `INV-${tx.order}`;
+  const fuelAmount = (tx.filledFuelL ?? 0) * (tx.fuelPricePerL ?? 0);
+  pdf.setTextColor(...navy);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(24);
+  pdf.text("INVOICE", 195, 18, { align: "right" });
+  pdf.setFontSize(8);
+  pdf.text(`#${invoiceNumber}`, 195, 24, { align: "right" });
+  pdf.setFontSize(10);
+  pdf.text("FUELSEARCH (PTY) LTD", 20, 18);
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(90);
+  pdf.setFontSize(7);
+  pdf.text(["Clearwater Office Park, 1 Atlas Rd, Parkhaven, Boksburg, 1459", "info@fuelsearch.co.za  ·  +27 74 1199 787", "Reg No: 2022/776599/07"], 20, 24);
+  pdf.setDrawColor(...navy);
+  pdf.setLineWidth(0.8);
+  pdf.line(20, 43, 195, 43);
+  pdf.setTextColor(...navy);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(7);
+  pdf.text("BILL TO", 20, 55);
+  pdf.text("INVOICE DETAILS", 145, 55);
+  pdf.setFontSize(10);
+  pdf.text(tx.clientName, 20, 63);
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(90);
+  pdf.setFontSize(8);
+  pdf.text(customer?.address ?? "Address not supplied", 20, 69, { maxWidth: 75 });
+  const details = [
+    ["Date", shortDate(tx.createdAt)],
+    ["Order Ref", tx.order],
+    ["Vehicle", tx.vehicle],
+    ["Depot", tx.depot],
+    ["Driver", tx.driver ?? "-"],
+  ];
+  details.forEach(([label, value], index) => {
+    const y = 62 + index * 7;
+    pdf.text(label, 145, y);
+    pdf.setTextColor(...navy);
+    pdf.text(value, 195, y, { align: "right", maxWidth: 38 });
+    pdf.setTextColor(90);
+  });
+  pdf.setFillColor(...navy);
+  pdf.rect(20, 93, 175, 10, "F");
+  pdf.setTextColor(255);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(7);
+  pdf.text("DESCRIPTION", 30, 99);
+  pdf.text("QUANTITY", 122, 99);
+  pdf.text("UNIT PRICE", 158, 99);
+  pdf.text("AMOUNT", 192, 99, { align: "right" });
+  pdf.setTextColor(40);
+  pdf.setFontSize(9);
+  pdf.text("Usage", 30, 116);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(7);
+  pdf.setTextColor(100);
+  pdf.text(`${tx.vehicle} · ${tx.depot}`, 30, 121, { maxWidth: 75 });
+  pdf.setTextColor(40);
+  pdf.text(`${number(tx.filledFuelL)} L`, 122, 116);
+  pdf.text(`R ${number(tx.fuelPricePerL, 2)}/L`, 158, 116);
+  pdf.setFont("helvetica", "bold");
+  pdf.text(money(fuelAmount), 192, 116, { align: "right" });
+  pdf.setDrawColor(220);
+  pdf.line(20, 128, 195, 128);
+  pdf.setFont("helvetica", "normal");
+  pdf.text("Subtotal", 142, 138);
+  pdf.text(money(tx.totalPrice), 192, 138, { align: "right" });
+  pdf.text("VAT (0%)", 142, 146);
+  pdf.text("R 0.00", 192, 146, { align: "right" });
+  pdf.setFillColor(...navy);
+  pdf.rect(136, 152, 59, 13, "F");
+  pdf.setTextColor(255);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(10);
+  pdf.text("TOTAL DUE", 140, 160);
+  pdf.text(money(tx.totalPrice), 192, 160, { align: "right" });
+  pdf.setTextColor(...navy);
+  pdf.setFontSize(7);
+  pdf.text("BANKING DETAILS", 20, 179);
+  pdf.line(20, 183, 195, 183);
+  pdf.setFontSize(8);
+  ["FNB 63026817544", "NEDBANK 1238798306", "ABSA 4105937663", "STANDARD BANK 10184309490"].forEach((bank, index) => {
+    const x = index % 2 === 0 ? 24 : 112;
+    const y = index < 2 ? 193 : 213;
+    pdf.text(bank, x, y);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(90);
+    pdf.text("Name: FUELSEARCH", x, y + 5);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(...navy);
+  });
+  pdf.setFontSize(9);
+  pdf.text("THANK YOU FOR YOUR BUSINESS", 107, 260, { align: "center" });
+  pdf.setLineWidth(0.5);
+  pdf.line(20, 270, 195, 270);
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(100);
+  pdf.setFontSize(6);
+  pdf.text("FuelSearch (Pty) Ltd · Reg No. 2022/776599/07", 20, 276);
+  pdf.text("info@fuelsearch.co.za · +27 74 1199 787", 195, 276, { align: "right" });
+  pdf.save(`FuelSearch_Invoice_${invoiceNumber}.pdf`);
 }
 
 export default App;

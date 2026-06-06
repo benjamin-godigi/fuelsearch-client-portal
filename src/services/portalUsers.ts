@@ -18,7 +18,14 @@ async function invokeUserFunction(body: Record<string, unknown>) {
     "manage-portal-user",
     { body },
   );
-  if (error) throw error;
+  if (error) {
+    const context = error.context as Response | undefined;
+    if (context) {
+      const payload = await context.clone().json().catch(() => null) as { error?: string } | null;
+      if (payload?.error) throw new Error(payload.error);
+    }
+    throw error;
+  }
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -34,6 +41,7 @@ function userPayload(customer: Customer) {
     address: customer.address?.trim(),
     vatNumber: customer.vatNumber?.trim(),
     registration: customer.registration?.trim(),
+    clientId: customer.clientId ? Number(customer.clientId) : undefined,
   };
 }
 
@@ -55,9 +63,6 @@ export async function resetPortalUserPassword(userId: string) {
 
 export async function completeRequiredPasswordChange(password: string) {
   const supabase = requireSupabase();
-  const { error: passwordError } = await supabase.auth.updateUser({ password });
-  if (passwordError) throw passwordError;
-
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) throw authError ?? new Error("Could not verify the signed-in user.");
 
@@ -66,4 +71,10 @@ export async function completeRequiredPasswordChange(password: string) {
     .update({ must_change_password: false })
     .eq("user_id", authData.user.id);
   if (profileError) throw profileError;
+
+  const { error: passwordError } = await supabase.auth.updateUser({ password });
+  if (passwordError) {
+    await supabase.from("profiles").update({ must_change_password: true }).eq("user_id", authData.user.id);
+    throw passwordError;
+  }
 }

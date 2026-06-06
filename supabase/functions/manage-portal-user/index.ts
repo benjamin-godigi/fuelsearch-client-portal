@@ -18,6 +18,7 @@ interface UserPayload {
   address?: string;
   vatNumber?: string;
   registration?: string;
+  clientId?: number;
 }
 
 function json(body: unknown, status = 200) {
@@ -141,15 +142,62 @@ Deno.serve(async (request) => {
     }
 
     if (!userId) {
+      const { data: existingUsers, error: usersError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      if (usersError) return json({ error: usersError.message, code: "AUTH_LOOKUP_FAILED" }, 400);
+      if (existingUsers.users.some((user) => user.email?.toLowerCase() === normalizedEmail)) {
+        return json({ error: `A portal account already exists for ${normalizedEmail}.`, code: "EMAIL_EXISTS" }, 409);
+      }
       const { data: created, error: createError } = await admin.auth.admin.createUser({
         email: normalizedEmail,
         password: temporaryPassword,
         email_confirm: true,
         user_metadata: { display_name: payload.displayName.trim() },
       });
-      if (createError || !created.user) return json({ error: createError?.message ?? "Could not create user." }, 400);
+      if (createError || !created.user) {
+        return json({
+          error: /already.*registered|already.*exists/i.test(createError?.message ?? "")
+            ? `A portal account already exists for ${normalizedEmail}.`
+            : createError?.message ?? "Could not create user.",
+          code: "AUTH_CREATE_FAILED",
+        }, 400);
+      }
       userId = created.user.id;
       createdNewUser = true;
+    }
+
+    let linkedClientId: number | null = null;
+    if (payload.role === "customer") {
+      const { data: clients, error: findClientError } = await admin.from("clients").select("id, name");
+      if (findClientError) {
+        if (createdNewUser) await admin.auth.admin.deleteUser(userId);
+        return json({ error: findClientError.message, code: "CLIENT_LOOKUP_FAILED" }, 400);
+      }
+      const existingClient = payload.clientId
+        ? clients?.find((client) => client.id === payload.clientId)
+        : clients?.find((client) => client.name.trim().toLowerCase() === payload.clientName!.trim().toLowerCase());
+      if (existingClient) {
+        linkedClientId = existingClient.id;
+      } else {
+        const { data: createdClient, error: clientCreateError } = await admin
+          .from("clients")
+          .insert({
+            user_id: null,
+            name: payload.clientName!.trim(),
+            contact_name: payload.displayName.trim(),
+            contact_email: normalizedEmail,
+            vat_number: payload.vatNumber?.trim() || null,
+            registration_number: payload.registration?.trim() || null,
+            ...splitAddress(payload.address),
+            is_active: true,
+          })
+          .select("id")
+          .single();
+        if (clientCreateError || !createdClient) {
+          if (createdNewUser) await admin.auth.admin.deleteUser(userId);
+          return json({ error: clientCreateError?.message ?? "Could not create the client.", code: "CLIENT_CREATE_FAILED" }, 400);
+        }
+        linkedClientId = createdClient.id;
+      }
     }
 
     const profileValues = {
@@ -160,6 +208,7 @@ Deno.serve(async (request) => {
       admin_permissions: payload.adminPermissions ?? {},
       is_active: true,
       must_change_password: true,
+      client_id: linkedClientId,
     };
     const profileQuery = payload.action === "bootstrap"
       ? admin.from("profiles").upsert(profileValues, { onConflict: "user_id" })
@@ -168,38 +217,6 @@ Deno.serve(async (request) => {
     if (profileError) {
       if (createdNewUser) await admin.auth.admin.deleteUser(userId);
       return json({ error: profileError.message }, 400);
-    }
-
-    if (payload.role === "customer") {
-      const clientValues = {
-        user_id: userId,
-        name: payload.clientName!.trim(),
-        contact_name: payload.displayName.trim(),
-        contact_email: payload.email.trim().toLowerCase(),
-        vat_number: payload.vatNumber?.trim() || null,
-        registration_number: payload.registration?.trim() || null,
-        ...splitAddress(payload.address),
-        is_active: true,
-      };
-      const { data: clients, error: findClientError } = await admin
-        .from("clients")
-        .select("id, name, user_id");
-      if (findClientError) return json({ error: findClientError.message }, 400);
-      const existingClient = clients?.find(
-        (client) => client.name.trim().toLowerCase() === payload.clientName!.trim().toLowerCase(),
-      );
-      if (existingClient?.user_id && existingClient.user_id !== userId) {
-        if (createdNewUser) await admin.auth.admin.deleteUser(userId);
-        return json({ error: `Client "${payload.clientName}" is already linked to another user.` }, 409);
-      }
-      const clientQuery = existingClient
-        ? admin.from("clients").update(clientValues).eq("id", existingClient.id)
-        : admin.from("clients").insert(clientValues);
-      const { error: clientError } = await clientQuery;
-      if (clientError) {
-        if (createdNewUser) await admin.auth.admin.deleteUser(userId);
-        return json({ error: clientError.message }, 400);
-      }
     }
 
     return json({
@@ -231,7 +248,6 @@ Deno.serve(async (request) => {
       .update({ is_active: false })
       .eq("user_id", payload.userId);
     if (profileError) return json({ error: profileError.message }, 400);
-    await admin.from("clients").update({ is_active: false }).eq("user_id", payload.userId);
     await admin.auth.admin.updateUserById(payload.userId, { ban_duration: "876000h" });
     return json({ ok: true });
   }
@@ -247,6 +263,17 @@ Deno.serve(async (request) => {
   });
   if (authError) return json({ error: authError.message }, 400);
 
+  let updateClientId: number | null = null;
+  if (payload.role === "customer") {
+    const { data: clients, error: clientLookupError } = await admin.from("clients").select("id, name");
+    if (clientLookupError) return json({ error: clientLookupError.message, code: "CLIENT_LOOKUP_FAILED" }, 400);
+    const matchingClient = payload.clientId
+      ? clients?.find((client) => client.id === payload.clientId)
+      : clients?.find((client) => client.name.trim().toLowerCase() === payload.clientName?.trim().toLowerCase());
+    if (!matchingClient) return json({ error: `Client "${payload.clientName}" could not be found.`, code: "CLIENT_NOT_FOUND" }, 404);
+    updateClientId = matchingClient.id;
+  }
+
   const { error: profileError } = await admin
     .from("profiles")
     .update({
@@ -254,18 +281,13 @@ Deno.serve(async (request) => {
       display_name: payload.displayName.trim(),
       role: payload.role,
       admin_permissions: payload.adminPermissions ?? {},
+      client_id: updateClientId,
     })
     .eq("user_id", payload.userId);
   if (profileError) return json({ error: profileError.message }, 400);
 
-  const { data: client } = await admin
-    .from("clients")
-    .select("id")
-    .eq("user_id", payload.userId)
-    .maybeSingle();
-  if (payload.role === "customer") {
+  if (payload.role === "customer" && updateClientId) {
     const clientValues = {
-      user_id: payload.userId,
       name: payload.clientName?.trim() || "Unassigned client",
       contact_name: payload.displayName.trim(),
       contact_email: payload.email.trim().toLowerCase(),
@@ -274,12 +296,8 @@ Deno.serve(async (request) => {
       is_active: true,
       ...splitAddress(payload.address),
     };
-    const clientResult = client
-      ? await admin.from("clients").update(clientValues).eq("id", client.id)
-      : await admin.from("clients").insert(clientValues);
+    const clientResult = await admin.from("clients").update(clientValues).eq("id", updateClientId);
     if (clientResult.error) return json({ error: clientResult.error.message }, 400);
-  } else if (client) {
-    await admin.from("clients").update({ is_active: false }).eq("id", client.id);
   }
 
   return json({ ok: true });

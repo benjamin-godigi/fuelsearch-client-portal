@@ -29,6 +29,7 @@ export interface Customer {
   vatNumber?: string;
   address?: string;
   registration?: string;
+  clientId?: string;
 }
 
 export interface ClientDirectoryEntry {
@@ -88,6 +89,8 @@ export interface Issue {
   resolutionNotes?: string;
   loggedAt: string;
   updatedAt: string;
+  customerUpdateAt?: string;
+  customerSeenAt?: string;
 }
 
 export interface ActivityLog {

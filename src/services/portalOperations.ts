@@ -244,6 +244,11 @@ export async function updateIssue(issue: Issue) {
   if (error) throw error;
 }
 
+export async function markIssueSeen(issueId: string) {
+  const { error } = await requireSupabase().rpc("mark_issue_seen", { issue_id: issueId });
+  if (error) throw error;
+}
+
 export async function writeActivityLog(action: string, details: string) {
   const user = await currentUser();
   const { error } = await requireSupabase()

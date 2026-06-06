@@ -41,6 +41,7 @@ interface ProfileRow {
   admin_permissions: AdminPermissions | null;
   must_change_password: boolean;
   is_active: boolean;
+  client_id: number | null;
 }
 
 interface TransactionRow {
@@ -77,6 +78,8 @@ interface IssueRow {
   resolution_notes: string | null;
   created_at: string;
   updated_at: string;
+  customer_update_at: string | null;
+  customer_seen_at: string | null;
 }
 
 interface ActivityLogRow {
@@ -125,7 +128,7 @@ export async function loadPortalData(
   const supabase = requireSupabase();
   const { data: profileData, error: profileError } = await supabase
     .from("profiles")
-    .select("user_id, email, display_name, role, admin_permissions, must_change_password, is_active")
+    .select("user_id, email, display_name, role, admin_permissions, must_change_password, is_active, client_id")
     .eq("is_active", true)
     .order("display_name");
 
@@ -174,7 +177,7 @@ export async function loadPortalData(
   const [{ data: issueData, error: issueError }, { data: activityData, error: activityError }, { data: importData, error: importError }] = await Promise.all([
     supabase
       .from("issues")
-      .select("id, title, description, category, priority, status, reported_by, source, order_reference, resolution_notes, created_at, updated_at")
+      .select("id, title, description, category, priority, status, reported_by, source, order_reference, resolution_notes, created_at, updated_at, customer_update_at, customer_seen_at")
       .order("updated_at", { ascending: false }),
     supabase
       .from("activity_logs")
@@ -196,12 +199,14 @@ export async function loadPortalData(
     email: signedInProfile.email,
     displayName: signedInProfile.display_name,
     role: signedInProfile.role,
-    clientName: signedInProfile.role === "customer" ? clients[0]?.name : undefined,
+    clientName: signedInProfile.role === "customer"
+      ? clients.find((client) => client.id === signedInProfile.client_id)?.name
+      : undefined,
     mustChangePassword: signedInProfile.must_change_password,
   };
 
   const profileCustomers: Customer[] = profiles.map((profile) => {
-    const ownedClient = clients.find((client) => client.user_id === profile.user_id);
+    const ownedClient = clients.find((client) => client.id === profile.client_id);
     return {
       id: profile.user_id,
       email: profile.email,
@@ -212,6 +217,7 @@ export async function loadPortalData(
       vatNumber: ownedClient?.vat_number ?? undefined,
       registration: ownedClient?.registration_number ?? undefined,
       address: ownedClient ? joinAddress(ownedClient) || undefined : undefined,
+      clientId: profile.client_id ? String(profile.client_id) : undefined,
     };
   });
 
@@ -261,6 +267,8 @@ export async function loadPortalData(
     resolutionNotes: issue.resolution_notes ?? undefined,
     loggedAt: issue.created_at,
     updatedAt: issue.updated_at,
+    customerUpdateAt: issue.customer_update_at ?? undefined,
+    customerSeenAt: issue.customer_seen_at ?? undefined,
   }));
 
   const activityLogs: ActivityLog[] = ((activityData ?? []) as ActivityLogRow[]).map((log) => ({
