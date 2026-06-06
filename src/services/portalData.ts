@@ -1,5 +1,17 @@
 import type { User } from "@supabase/supabase-js";
-import type { ClientDirectoryEntry, Customer, PortalUser, Transaction, TransactionStatus } from "../types";
+import type {
+  ActivityLog,
+  AdminPermissions,
+  ClientDirectoryEntry,
+  Customer,
+  ImportBatch,
+  Issue,
+  IssuePriority,
+  IssueStatus,
+  PortalUser,
+  Transaction,
+  TransactionStatus,
+} from "../types";
 import { requireSupabase } from "../lib/supabase";
 import type { AppState } from "./store";
 
@@ -25,6 +37,9 @@ interface ProfileRow {
   email: string;
   display_name: string;
   role: "super_admin" | "admin" | "customer";
+  admin_permissions: AdminPermissions | null;
+  must_change_password: boolean;
+  is_active: boolean;
 }
 
 interface TransactionRow {
@@ -48,6 +63,41 @@ interface TransactionRow {
   depots: Array<{ name: string }> | { name: string } | null;
 }
 
+interface IssueRow {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  priority: IssuePriority;
+  status: IssueStatus;
+  reported_by: string;
+  source: string;
+  order_reference: string | null;
+  resolution_notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ActivityLogRow {
+  id: string;
+  action: string;
+  details: string;
+  performed_at: string;
+  admin_email: string;
+}
+
+interface ImportBatchRow {
+  id: string;
+  filename: string;
+  rows_in_file: number;
+  imported: number;
+  skipped: number;
+  dropped_in_parser: number;
+  order_numbers: string[];
+  imported_at: string;
+  imported_by_email: string;
+}
+
 function joinAddress(client: ClientRow) {
   return [
     client.address_line_1,
@@ -60,18 +110,22 @@ function joinAddress(client: ClientRow) {
     .join(", ");
 }
 
-function relationName(relation: TransactionRow["clients"]) {
-  if (Array.isArray(relation)) return relation[0]?.name;
-  return relation?.name;
+function relationValue<T extends Record<string, unknown>, K extends keyof T>(
+  relation: T[] | T | null,
+  key: K,
+) {
+  if (Array.isArray(relation)) return relation[0]?.[key];
+  return relation?.[key];
 }
 
 export async function loadPortalData(
   user: User,
-): Promise<Pick<AppState, "currentUser" | "customers" | "clientDirectory" | "transactions">> {
+): Promise<Pick<AppState, "currentUser" | "customers" | "clientDirectory" | "transactions" | "issues" | "activityLogs" | "importBatches">> {
   const supabase = requireSupabase();
   const { data: profileData, error: profileError } = await supabase
     .from("profiles")
-    .select("user_id, email, display_name, role")
+    .select("user_id, email, display_name, role, admin_permissions, must_change_password, is_active")
+    .eq("is_active", true)
     .order("display_name");
 
   if (profileError) throw profileError;
@@ -107,12 +161,33 @@ export async function loadPortalData(
 
   if (transactionError) throw transactionError;
 
+  const [{ data: issueData, error: issueError }, { data: activityData, error: activityError }, { data: importData, error: importError }] = await Promise.all([
+    supabase
+      .from("issues")
+      .select("id, title, description, category, priority, status, reported_by, source, order_reference, resolution_notes, created_at, updated_at")
+      .order("updated_at", { ascending: false }),
+    supabase
+      .from("activity_logs")
+      .select("id, action, details, performed_at, admin_email")
+      .order("performed_at", { ascending: false })
+      .limit(500),
+    supabase
+      .from("import_batches")
+      .select("id, filename, rows_in_file, imported, skipped, dropped_in_parser, order_numbers, imported_at, imported_by_email")
+      .order("imported_at", { ascending: false })
+      .limit(200),
+  ]);
+  if (issueError) throw issueError;
+  if (activityError) throw activityError;
+  if (importError) throw importError;
+
   const currentUser: PortalUser = {
     id: user.id,
     email: signedInProfile.email,
     displayName: signedInProfile.display_name,
     role: signedInProfile.role,
     clientName: signedInProfile.role === "customer" ? clients[0]?.name : undefined,
+    mustChangePassword: signedInProfile.must_change_password,
   };
 
   const profileCustomers: Customer[] = profiles.map((profile) => {
@@ -123,6 +198,7 @@ export async function loadPortalData(
       clientName: ownedClient?.name ?? (profile.role === "customer" ? "Unassigned client" : "FuelSearch"),
       displayName: profile.display_name,
       role: profile.role,
+      adminPermissions: profile.role === "admin" ? profile.admin_permissions ?? undefined : undefined,
       vatNumber: ownedClient?.vat_number ?? undefined,
       registration: ownedClient?.registration_number ?? undefined,
       address: ownedClient ? joinAddress(ownedClient) || undefined : undefined,
@@ -158,8 +234,8 @@ export async function loadPortalData(
   const transactions: Transaction[] = ((transactionData ?? []) as TransactionRow[]).map((transaction) => ({
     id: String(transaction.id),
     order: transaction.order_number,
-    clientName: relationName(transaction.clients) ?? "",
-    depot: relationName(transaction.depots) ?? "Unassigned depot",
+    clientName: String(relationValue(transaction.clients, "name") ?? ""),
+    depot: String(relationValue(transaction.depots, "name") ?? "Unassigned depot"),
     vehicle: transaction.vehicle_registration ?? "-",
     vehicleOdoReading: transaction.odometer_km ?? undefined,
     driver: transaction.driver_name ?? undefined,
@@ -176,5 +252,40 @@ export async function loadPortalData(
     notes: transaction.notes ?? undefined,
   }));
 
-  return { currentUser, customers, clientDirectory, transactions };
+  const issues: Issue[] = ((issueData ?? []) as IssueRow[]).map((issue) => ({
+    id: issue.id,
+    title: issue.title,
+    description: issue.description,
+    category: issue.category,
+    priority: issue.priority,
+    status: issue.status,
+    reportedBy: issue.reported_by,
+    source: issue.source,
+    orderRef: issue.order_reference ?? undefined,
+    resolutionNotes: issue.resolution_notes ?? undefined,
+    loggedAt: issue.created_at,
+    updatedAt: issue.updated_at,
+  }));
+
+  const activityLogs: ActivityLog[] = ((activityData ?? []) as ActivityLogRow[]).map((log) => ({
+    id: log.id,
+    action: log.action,
+    adminEmail: log.admin_email,
+    details: log.details,
+    performedAt: log.performed_at,
+  }));
+
+  const importBatches: ImportBatch[] = ((importData ?? []) as ImportBatchRow[]).map((batch) => ({
+    id: batch.id,
+    filename: batch.filename,
+    importedAt: batch.imported_at,
+    importedBy: batch.imported_by_email,
+    rowsInFile: batch.rows_in_file,
+    imported: batch.imported,
+    skipped: batch.skipped,
+    droppedInParser: batch.dropped_in_parser,
+    orderNumbers: batch.order_numbers,
+  }));
+
+  return { currentUser, customers, clientDirectory, transactions, issues, activityLogs, importBatches };
 }

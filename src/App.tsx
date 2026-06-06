@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -21,7 +21,6 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquarePlus,
-  Mail,
   Pencil,
   Plus,
   Search,
@@ -38,12 +37,25 @@ import { isSupabaseConfigured } from "./lib/supabase";
 import {
   getSupabaseSession,
   onSupabaseAuthChange,
-  requestPasswordReset,
   signInWithPassword,
   signOutFromSupabase,
-  updatePassword,
 } from "./services/supabaseAuth";
 import { loadPortalData } from "./services/portalData";
+import {
+  completeRequiredPasswordChange,
+  createPortalUser,
+  deactivatePortalUser,
+  resetPortalUserPassword,
+  updatePortalUser,
+} from "./services/portalUsers";
+import {
+  createIssue,
+  deleteTransaction,
+  importTransactions,
+  saveTransaction,
+  updateIssue,
+  writeActivityLog,
+} from "./services/portalOperations";
 
 const LOGO_URL = "https://fuelsearch.co.za/wp-content/uploads/Logo.svg";
 const STATUSES: TransactionStatus[] = ["Completed", "Pending", "Open", "Expired", "Cancelled"];
@@ -242,34 +254,6 @@ function mapImportRows(rows: Record<string, unknown>[]): Transaction[] {
     .filter(Boolean) as Transaction[];
 }
 
-function mapClientRows(rows: Record<string, unknown>[]): ClientDirectoryEntry[] {
-  return rows
-    .map((source) => {
-      const row: Record<string, unknown> = {};
-      Object.entries(source).forEach(([key, value]) => {
-        row[normalizeHeader(key)] = value;
-      });
-      const clientName = String(row["Client Name"] ?? "").trim();
-      if (!clientName) return null;
-      return {
-        id: makeId("directory-client"),
-        clientName,
-        contactPerson: String(row["Contact Person"] ?? "").trim() || undefined,
-        email: String(row.Email ?? "").trim() || undefined,
-        phone: String(row.Phone ?? "").trim() || undefined,
-        contactPersonPhone: String(row["Contact Person Phone"] ?? "").trim() || undefined,
-        contactPersonEmail: String(row["Contact Person Email"] ?? "").trim() || undefined,
-        pricingTier: String(row["Pricing Tier"] ?? "").trim() || undefined,
-        balance: parseNumber(row["Balance (R)"]),
-        lowBalanceThreshold: parseNumber(row["Low Balance Threshold (R)"]),
-        overageThreshold: parseNumber(row["Overage Threshold (R)"]),
-        address: String(row.Address ?? "").trim() || undefined,
-        createdAt: parseDateValue(row["Created At"]),
-      } satisfies ClientDirectoryEntry;
-    })
-    .filter(Boolean) as ClientDirectoryEntry[];
-}
-
 function StatusBadge({ status }: { status: TransactionStatus | IssueStatus | Role }) {
   return <span className={`badge badge-${status.toLowerCase().replace(/\s+/g, "-").replace(/_/g, "-")}`}>{formatRole(status)}</span>;
 }
@@ -303,15 +287,6 @@ function App() {
   const [signedInUser, setSignedInUser] = useState<PortalUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState("");
-  const [passwordRecovery, setPasswordRecovery] = useState(() => (
-    window.location.pathname === "/reset-password"
-    || /(?:^|[&#?])type=recovery(?:&|$)/.test(`${window.location.search}${window.location.hash}`)
-  ));
-  const passwordRecoveryRef = useRef(passwordRecovery);
-
-  useEffect(() => {
-    passwordRecoveryRef.current = passwordRecovery;
-  }, [passwordRecovery]);
 
   const update = (next: Partial<AppState>) => setState((current) => ({ ...current, ...next }));
   const hydrateSupabaseUser = useCallback(async (user: User) => {
@@ -343,10 +318,6 @@ function App() {
     void getSupabaseSession()
       .then((session) => {
         if (!active) return;
-        if (passwordRecoveryRef.current) {
-          setAuthReady(true);
-          return;
-        }
         if (session?.user) {
           void hydrateSupabaseUser(session.user);
           return;
@@ -360,19 +331,8 @@ function App() {
         setAuthReady(true);
       });
 
-    const unsubscribe = onSupabaseAuthChange((event, session) => {
+    const unsubscribe = onSupabaseAuthChange((_event, session) => {
       if (!active) return;
-      if (event === "PASSWORD_RECOVERY") {
-        passwordRecoveryRef.current = true;
-        setPasswordRecovery(true);
-        setAuthError("");
-        setAuthReady(true);
-        return;
-      }
-      if (passwordRecoveryRef.current) {
-        setAuthReady(true);
-        return;
-      }
       if (session?.user) {
         void hydrateSupabaseUser(session.user);
       } else {
@@ -418,20 +378,28 @@ function App() {
         path="/"
         element={
           state.currentUser ? (
-            <Navigate to={isCustomerRole(state.currentUser.role) ? "/statement" : "/admin"} replace />
+            <Navigate
+              to={state.currentUser.mustChangePassword ? "/change-password" : isCustomerRole(state.currentUser.role) ? "/statement" : "/admin"}
+              replace
+            />
           ) : (
             <LoginPage authError={authError} clearAuthError={() => setAuthError("")} />
           )
         }
       />
       <Route
-        path="/reset-password"
+        path="/change-password"
         element={
-          passwordRecovery ? (
-            <PasswordResetPage
+          state.currentUser?.mustChangePassword ? (
+            <RequiredPasswordChangePage
               onComplete={() => {
-                passwordRecoveryRef.current = false;
-                setPasswordRecovery(false);
+                setState((current) => ({
+                  ...current,
+                  currentUser: current.currentUser
+                    ? { ...current.currentUser, mustChangePassword: false }
+                    : null,
+                }));
+                setSignedInUser((current) => current ? { ...current, mustChangePassword: false } : null);
               }}
             />
           ) : (
@@ -442,7 +410,7 @@ function App() {
       <Route
         path="/statement"
         element={
-          state.currentUser?.role === "customer" ? (
+          state.currentUser?.role === "customer" && !state.currentUser.mustChangePassword ? (
             <StatementPage state={state} update={update} logout={logout} exitPreview={isPreviewing ? exitPreview : undefined} />
           ) : (
             <Navigate to="/" replace />
@@ -452,7 +420,7 @@ function App() {
       <Route
         path="/admin/*"
         element={
-          state.currentUser && !isCustomerRole(state.currentUser.role) ? (
+          state.currentUser && !state.currentUser.mustChangePassword && !isCustomerRole(state.currentUser.role) ? (
             <AdminLayout
               state={state}
               update={update}
@@ -489,15 +457,12 @@ function LoginPage({ authError, clearAuthError }: { authError: string; clearAuth
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [resetMode, setResetMode] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   const submitCredentials = async (event: FormEvent) => {
     event.preventDefault();
     setSubmitting(true);
     setError("");
-    setMessage("");
     clearAuthError();
     if (!isSupabaseConfigured) {
       setError("Portal configuration is incomplete. Please contact FuelSearch support.");
@@ -505,16 +470,11 @@ function LoginPage({ authError, clearAuthError }: { authError: string; clearAuth
       return;
     }
     try {
-      if (resetMode) {
-        await requestPasswordReset(email.trim());
-        setMessage("If that email has an approved portal account, a password reset link is on its way.");
-      } else {
-        await signInWithPassword(email.trim(), password);
-      }
+      await signInWithPassword(email.trim(), password);
     } catch (requestError) {
       setError(authErrorMessage(
         requestError,
-        resetMode ? "Could not send the password reset email." : "Could not sign in.",
+        "Could not sign in.",
       ));
     } finally {
       setSubmitting(false);
@@ -526,11 +486,9 @@ function LoginPage({ authError, clearAuthError }: { authError: string; clearAuth
       <section className="login-panel">
         <img src={LOGO_URL} alt="FuelSearch" className="login-logo" />
         <p className="eyebrow">Client Portal</p>
-        <h1>{resetMode ? "Reset your password." : "Welcome back."}</h1>
+        <h1>Welcome back.</h1>
         <p className="login-copy">
-          {resetMode
-            ? "Enter the email linked to your approved FuelSearch portal account."
-            : "Sign in with the email and password linked to your FuelSearch account."}
+          Sign in with the email and password linked to your FuelSearch account.
         </p>
 
         <form className="auth-form" onSubmit={submitCredentials}>
@@ -545,37 +503,21 @@ function LoginPage({ authError, clearAuthError }: { authError: string; clearAuth
             placeholder="you@company.co.za"
             required
           />
-          {!resetMode && (
-            <>
-              <label htmlFor="portal-password">Password</label>
-              <input
-                id="portal-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-              />
-            </>
-          )}
+          <label htmlFor="portal-password">Password</label>
+          <input
+            id="portal-password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
           <button className="button primary auth-submit" type="submit" disabled={submitting}>
-            {resetMode ? <Mail size={18} /> : <KeyRound size={18} />}
-            {submitting ? (resetMode ? "Sending..." : "Signing in...") : (resetMode ? "Send reset link" : "Sign in")}
+            <KeyRound size={18} />
+            {submitting ? "Signing in..." : "Sign in"}
           </button>
           {(error || authError) && <p className="auth-message auth-error" role="alert">{error || authError}</p>}
-          {message && <p className="auth-message auth-success" role="status">{message}</p>}
-          <button
-            type="button"
-            className="auth-text-button"
-            onClick={() => {
-              setResetMode((current) => !current);
-              setError("");
-              setMessage("");
-              clearAuthError();
-            }}
-          >
-            {resetMode ? "Back to sign in" : "Forgot your password?"}
-          </button>
+          <p className="auth-footnote">Contact a FuelSearch administrator if you need a new temporary password.</p>
           <p className="auth-footnote">Portal access remains limited to users approved by FuelSearch.</p>
         </form>
       </section>
@@ -583,7 +525,7 @@ function LoginPage({ authError, clearAuthError }: { authError: string; clearAuth
   );
 }
 
-function PasswordResetPage({ onComplete }: { onComplete: () => void }) {
+function RequiredPasswordChangePage({ onComplete }: { onComplete: () => void }) {
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -593,8 +535,8 @@ function PasswordResetPage({ onComplete }: { onComplete: () => void }) {
   const savePassword = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
-    if (password.length < 8) {
-      setError("Use at least 8 characters for your new password.");
+    if (password.length < 12) {
+      setError("Use at least 12 characters for your new password.");
       return;
     }
     if (password !== confirmation) {
@@ -604,17 +546,11 @@ function PasswordResetPage({ onComplete }: { onComplete: () => void }) {
 
     setSubmitting(true);
     try {
-      await updatePassword(password);
-      await signOutFromSupabase();
+      await completeRequiredPasswordChange(password);
       onComplete();
-      navigate("/", {
-        replace: true,
-      });
-    } catch (updateError) {
-      setError(authErrorMessage(
-        updateError,
-        "This password reset link is invalid or has expired. Request a new one from the sign-in page.",
-      ));
+      navigate("/", { replace: true });
+    } catch (changeError) {
+      setError(authErrorMessage(changeError, "Could not update your password."));
     } finally {
       setSubmitting(false);
     }
@@ -624,38 +560,33 @@ function PasswordResetPage({ onComplete }: { onComplete: () => void }) {
     <main className="login-screen">
       <section className="login-panel">
         <img src={LOGO_URL} alt="FuelSearch" className="login-logo" />
-        <p className="eyebrow">Secure account recovery</p>
-        <h1>Choose a new password.</h1>
-        <p className="login-copy">Your new password must be at least 8 characters long.</p>
+        <p className="eyebrow">First sign-in</p>
+        <h1>Create your permanent password.</h1>
+        <p className="login-copy">Replace the temporary password before continuing to the portal.</p>
         <form className="auth-form" onSubmit={savePassword}>
+          <input type="text" name="username" autoComplete="username" hidden />
+          <label htmlFor="required-new-password">New password</label>
           <input
-            type="text"
-            name="username"
-            autoComplete="username"
-            hidden
-          />
-          <label htmlFor="new-password">New password</label>
-          <input
-            id="new-password"
+            id="required-new-password"
             type="password"
             autoComplete="new-password"
-            minLength={8}
+            minLength={12}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             required
           />
-          <label htmlFor="confirm-password">Confirm new password</label>
+          <label htmlFor="required-confirm-password">Confirm new password</label>
           <input
-            id="confirm-password"
+            id="required-confirm-password"
             type="password"
             autoComplete="new-password"
-            minLength={8}
+            minLength={12}
             value={confirmation}
             onChange={(event) => setConfirmation(event.target.value)}
             required
           />
           <button className="button primary auth-submit" type="submit" disabled={submitting}>
-            <KeyRound size={18} /> {submitting ? "Updating..." : "Update password"}
+            <KeyRound size={18} /> {submitting ? "Saving..." : "Set permanent password"}
           </button>
           {error && <p className="auth-message auth-error" role="alert">{error}</p>}
         </form>
@@ -670,6 +601,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
   const [visible, setVisible] = useState(20);
   const [invoiceTx, setInvoiceTx] = useState<Transaction | null>(null);
   const [issueTx, setIssueTx] = useState<Transaction | null>(null);
+  const [issueError, setIssueError] = useState("");
   const availableClients = state.clientDirectory.map((client) => client.clientName);
   const [clientName, setClientName] = useState(
     state.currentUser?.clientName ?? availableClients[0] ?? "",
@@ -701,23 +633,25 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
   const totalLitres = completed.reduce((sum, tx) => sum + (tx.filledFuelL ?? 0), 0);
   const totalAmount = completed.reduce((sum, tx) => sum + tx.totalPrice, 0);
 
-  const reportIssue = (payload: { title: string; description: string; category: string; priority: IssuePriority; orderRef?: string }) => {
+  const reportIssue = async (payload: { title: string; description: string; category: string; priority: IssuePriority; orderRef?: string }) => {
     const now = new Date().toISOString();
-    update({
-      issues: [
-        {
-          id: makeId("issue"),
-          status: "Open",
-          reportedBy: clientName,
-          source: "Customer Statement",
-          loggedAt: now,
-          updatedAt: now,
-          ...payload,
-        },
-        ...state.issues,
-      ],
-    });
-    setIssueTx(null);
+    const draft: Issue = {
+      id: makeId("issue"),
+      status: "Open",
+      reportedBy: clientName,
+      source: "Customer Statement",
+      loggedAt: now,
+      updatedAt: now,
+      ...payload,
+    };
+    setIssueError("");
+    try {
+      const saved = await createIssue(draft);
+      update({ issues: [saved, ...state.issues] });
+      setIssueTx(null);
+    } catch (error) {
+      setIssueError(error instanceof Error ? error.message : "Could not submit the request.");
+    }
   };
 
   return (
@@ -810,7 +744,8 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
         {filtered.length > visible && <button className="button outline centered" onClick={() => setVisible((count) => count + 20)}><ChevronDown size={16} /> Load More ({filtered.length - visible} remaining)</button>}
       </section>
       {invoiceTx && <InvoiceModal tx={invoiceTx} customer={customer} onClose={() => setInvoiceTx(null)} onReport={() => setIssueTx(invoiceTx)} />}
-      {issueTx && <IssueDialog tx={issueTx.order ? issueTx : undefined} onClose={() => setIssueTx(null)} onSubmit={reportIssue} />}
+      {issueError && <p className="auth-message auth-error statement-action-error" role="alert">{issueError}</p>}
+      {issueTx && <IssueDialog tx={issueTx.order ? issueTx : undefined} onClose={() => setIssueTx(null)} onSubmit={(payload) => void reportIssue(payload)} />}
     </main>
   );
 }
@@ -1138,6 +1073,7 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
   const [viewing, setViewing] = useState<Transaction | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [operationError, setOperationError] = useState("");
   const filtered = state.transactions
     .filter((tx) => {
       const created = tx.createdAt.slice(0, 10);
@@ -1150,19 +1086,39 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
   useEffect(() => {
     setVisibleTransactions(10);
   }, [search, status, from, to, state.transactions.length]);
-  const saveTx = (tx: Transaction) => {
-    const exists = state.transactions.some((item) => item.id === tx.id);
-    update({ transactions: exists ? state.transactions.map((item) => item.id === tx.id ? tx : item) : [tx, ...state.transactions] });
-    setEditing(null);
+  const saveTx = async (tx: Transaction) => {
+    setOperationError("");
+    try {
+      const id = await saveTransaction(tx);
+      const saved = { ...tx, id };
+      const exists = state.transactions.some((item) => item.id === tx.id);
+      update({ transactions: exists ? state.transactions.map((item) => item.id === tx.id ? saved : item) : [saved, ...state.transactions] });
+      void writeActivityLog(exists ? "Updated transaction" : "Created transaction", `${saved.order} · ${saved.clientName}`).catch(() => undefined);
+      setEditing(null);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Could not save the transaction.");
+    }
+  };
+  const removeTransaction = async (tx: Transaction) => {
+    if (!window.confirm(`Delete transaction ${tx.order}?`)) return;
+    setOperationError("");
+    try {
+      await deleteTransaction(tx.id);
+      update({ transactions: state.transactions.filter((item) => item.id !== tx.id) });
+      void writeActivityLog("Deleted transaction", `${tx.order} · ${tx.clientName}`).catch(() => undefined);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Could not delete the transaction.");
+    }
   };
   return (
     <div className="page-stack">
       <div className="page-title-row"><h1>Transactions</h1><div className="row-actions"><button className="button outline" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button><button className="button outline" onClick={() => setHistoryOpen(true)}><History size={16} /> Import History</button><button className="button primary" onClick={() => setEditing("new")}><Plus size={16} /> Add Manually</button></div></div>
+      {operationError && <p className="auth-message auth-error" role="alert">{operationError}</p>}
       <div className="filters"><label><Search size={16} /><input placeholder="Search client..." value={search} onChange={(event) => setSearch(event.target.value)} /></label><select value={status} onChange={(event) => setStatus(event.target.value as TransactionStatus | "All")}><option>All</option>{STATUSES.map((item) => <option key={item}>{item}</option>)}</select><input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><span>→</span><input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></div>
       <div className="table-card">
         <table>
           <thead><tr><th></th><th>Status</th><th>Order #</th><th>Client</th><th>Vehicle</th><th>Filled (L)</th><th>Total Price</th><th>Profit</th><th>Created At</th><th>Actions</th></tr></thead>
-          <tbody>{shownTransactions.map((tx) => <FragmentTx key={tx.id} tx={tx} expanded={expanded === tx.id} toggle={() => setExpanded(expanded === tx.id ? null : tx.id)} view={() => setViewing(tx)} edit={() => setEditing(tx)} remove={() => update({ transactions: state.transactions.filter((item) => item.id !== tx.id) })} />)}</tbody>
+          <tbody>{shownTransactions.map((tx) => <FragmentTx key={tx.id} tx={tx} expanded={expanded === tx.id} toggle={() => setExpanded(expanded === tx.id ? null : tx.id)} view={() => setViewing(tx)} edit={() => setEditing(tx)} remove={() => void removeTransaction(tx)} />)}</tbody>
         </table>
         <div className="load-more-row">
           <button
@@ -1176,9 +1132,9 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
           </button>
         </div>
       </div>
-      {editing && <TransactionForm tx={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSave={saveTx} />}
+      {editing && <TransactionForm tx={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSave={(tx) => void saveTx(tx)} />}
       {viewing && <TransactionDetailsModal tx={viewing} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setViewing(null); }} />}
-      {importOpen && <ImportDialog state={state} update={update} onClose={() => setImportOpen(false)} />}
+      {importOpen && <ImportDialog state={state} update={update} onClose={() => setImportOpen(false)} onError={setOperationError} />}
       {historyOpen && <ImportHistoryDialog batches={state.importBatches} onClose={() => setHistoryOpen(false)} />}
     </div>
   );
@@ -1294,7 +1250,7 @@ function TransactionForm({ tx, onClose, onSave }: { tx?: Transaction; onClose: (
   );
 }
 
-function ImportDialog({ state, update, onClose }: { state: AppState; update: (next: Partial<AppState>) => void; onClose: () => void }) {
+function ImportDialog({ state, update, onClose, onError }: { state: AppState; update: (next: Partial<AppState>) => void; onClose: () => void; onError: (message: string) => void }) {
   const [filename, setFilename] = useState("");
   const [rows, setRows] = useState<Transaction[]>([]);
   const [message, setMessage] = useState("");
@@ -1305,18 +1261,25 @@ function ImportDialog({ state, update, onClose }: { state: AppState; update: (ne
     const rawRows = await parseWorkbookRows(file);
     setRows(mapImportRows(rawRows));
   };
-  const commit = () => {
+  const commit = async () => {
     const orders = new Set(rows.map((tx) => tx.order));
     const preserved = state.transactions.filter((tx) => !orders.has(tx.order));
     const actorEmail = state.currentUser?.email ?? "unknown";
     const batch: ImportBatch = { id: makeId("batch"), filename, importedAt: new Date().toISOString(), importedBy: actorEmail, rowsInFile: rows.length, imported: rows.length, skipped: 0, droppedInParser: 0, orderNumbers: rows.map((tx) => tx.order) };
-    update({ transactions: [...rows, ...preserved], importBatches: [batch, ...state.importBatches], activityLogs: [{ id: makeId("activity"), action: "Imported transactions", adminEmail: actorEmail, details: `${rows.length} rows imported from ${filename}`, performedAt: new Date().toISOString() }, ...state.activityLogs] });
-    setMessage(`Import complete - ${rows.length} records processed by Order #.`);
+    onError("");
+    try {
+      const savedRows = await importTransactions(rows, batch);
+      void writeActivityLog("Imported transactions", `${rows.length} rows imported from ${filename}`).catch(() => undefined);
+      update({ transactions: [...savedRows, ...preserved], importBatches: [batch, ...state.importBatches], activityLogs: [{ id: makeId("activity"), action: "Imported transactions", adminEmail: actorEmail, details: `${rows.length} rows imported from ${filename}`, performedAt: new Date().toISOString() }, ...state.activityLogs] });
+      setMessage(`Import complete - ${rows.length} records processed by Order #.`);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not import the transactions.");
+    }
   };
   return (
     <Modal title="Import Transactions" onClose={onClose} wide>
       <div className="import-drop"><Upload size={28} /><strong>Choose the FuelSearch export</strong><p>Supports .xlsx, .xls, and .csv. Existing records are replaced by Order #.</p><input type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} /></div>
-      {rows.length > 0 && <div className="table-card compact"><div className="section-head"><div><h2>{filename}</h2><p>{rows.length} valid rows detected. Previewing first 5 rows.</p></div><button className="button primary" onClick={commit}>Import {rows.length} Rows</button></div><SimpleTxTable transactions={rows.slice(0, 5)} /></div>}
+      {rows.length > 0 && <div className="table-card compact"><div className="section-head"><div><h2>{filename}</h2><p>{rows.length} valid rows detected. Previewing first 5 rows.</p></div><button className="button primary" onClick={() => void commit()}>Import {rows.length} Rows</button></div><SimpleTxTable transactions={rows.slice(0, 5)} /></div>}
       {message && <p className="success-note"><CheckCircle2 size={16} /> {message}</p>}
     </Modal>
   );
@@ -1339,8 +1302,9 @@ function CustomersAdmin({
 }) {
   const navigate = useNavigate();
   const [editing, setEditing] = useState<Customer | "new" | null>(null);
-  const [clientImportOpen, setClientImportOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [userError, setUserError] = useState("");
+  const [temporaryCredentials, setTemporaryCredentials] = useState<{ email: string; password: string } | null>(null);
   const currentAdmin = getSignedInAdmin(state);
   const allowSuperAdmin = isSuperAdminRole(currentAdmin?.role);
   const visibleCustomers = useMemo(
@@ -1367,12 +1331,32 @@ function CustomersAdmin({
     },
     [search, visibleCustomers],
   );
-  const save = (customer: Customer) => {
+  const save = async (customer: Customer) => {
+    setUserError("");
     const normalized: Customer = {
       ...customer,
       adminPermissions: customer.role === "admin" ? normalizeAdminPermissions(customer.adminPermissions) : undefined,
     };
     const existing = state.customers.find((item) => item.id === normalized.id);
+    try {
+      if (existing) {
+        await updatePortalUser(normalized);
+      } else {
+        const result = await createPortalUser(normalized);
+        if (!result?.user?.id || !result.temporaryPassword) {
+          throw new Error("The user was created without temporary credentials.");
+        }
+        normalized.id = result.user.id;
+        setTemporaryCredentials({
+          email: normalized.email,
+          password: result.temporaryPassword,
+        });
+      }
+      void writeActivityLog(existing ? "Updated user" : "Created user", buildCustomerAuditDetails(normalized)).catch(() => undefined);
+    } catch (saveError) {
+      setUserError(saveError instanceof Error ? saveError.message : "Could not save the user.");
+      return;
+    }
     const now = new Date().toISOString();
     const actorEmail = currentAdmin?.email ?? state.currentUser?.email ?? "unknown";
     const customers = existing ? state.customers.map((item) => item.id === normalized.id ? normalized : item) : [normalized, ...state.customers];
@@ -1391,10 +1375,43 @@ function CustomersAdmin({
     });
     setEditing(null);
   };
+  const deactivate = async (customer: Customer) => {
+    if (!window.confirm(`Deactivate ${customer.displayName}? They will no longer be able to sign in.`)) return;
+    setUserError("");
+    try {
+      await deactivatePortalUser(customer.id);
+      void writeActivityLog("Deactivated user", buildCustomerAuditDetails(customer)).catch(() => undefined);
+      update({
+        customers: state.customers.filter((item) => item.id !== customer.id),
+        activityLogs: [{
+          id: makeId("activity"),
+          action: "Deactivated user",
+          adminEmail: currentAdmin?.email ?? state.currentUser?.email ?? "unknown",
+          details: buildCustomerAuditDetails(customer),
+          performedAt: new Date().toISOString(),
+        }, ...state.activityLogs],
+      });
+    } catch (deactivateError) {
+      setUserError(deactivateError instanceof Error ? deactivateError.message : "Could not deactivate the user.");
+    }
+  };
+  const resetUserPassword = async (customer: Customer) => {
+    if (!window.confirm(`Issue a new temporary password for ${customer.displayName}?`)) return;
+    setUserError("");
+    try {
+      const result = await resetPortalUserPassword(customer.id);
+      if (!result?.temporaryPassword) throw new Error("No temporary password was returned.");
+      void writeActivityLog("Reset user password", customer.email).catch(() => undefined);
+      setTemporaryCredentials({ email: customer.email, password: result.temporaryPassword });
+    } catch (resetError) {
+      setUserError(resetError instanceof Error ? resetError.message : "Could not reset the user's password.");
+    }
+  };
   return (
     <div className="page-stack">
-      <div className="page-title-row"><h1>Users</h1><div className="row-actions"><button className="button outline" onClick={() => setClientImportOpen(true)}><Upload size={16} /> Import Client List</button><button className="button primary" onClick={() => setEditing("new")}><UserPlus size={16} /> Add User</button></div></div>
-      <div className="info-box"><AlertCircle size={20} /><div><strong>Testing the portal?</strong><p>Use a temporary email or an old personal email to create customer accounts. The Client Name must exactly match the Client column in the imported transaction file, including capitalization and spaces.</p></div></div>
+      <div className="page-title-row"><h1>Users</h1><div className="row-actions"><button className="button primary" onClick={() => setEditing("new")}><UserPlus size={16} /> Add User</button></div></div>
+      <div className="info-box"><AlertCircle size={20} /><div><strong>Adding a portal user</strong><p>The portal creates a confirmed Auth account and one-time temporary password. Share it securely; the user must replace it on first sign-in.</p></div></div>
+      {userError && <p className="auth-message auth-error" role="alert">{userError}</p>}
       <div className="filters"><label><Search size={16} /><input placeholder="Search by email, name, or role..." value={search} onChange={(event) => setSearch(event.target.value)} /></label></div>
       <div className="table-card">
         <table>
@@ -1426,8 +1443,9 @@ function CustomersAdmin({
                         <Eye size={16} />
                       </IconButton>
                     )}
+                    <IconButton label="Issue new temporary password" onClick={() => void resetUserPassword(customer)}><KeyRound size={16} /></IconButton>
                     <IconButton label="Edit" onClick={() => setEditing(customer)}><Pencil size={16} /></IconButton>
-                    <IconButton label="Delete" danger onClick={() => update({ customers: state.customers.filter((item) => item.id !== customer.id) })}><Trash2 size={16} /></IconButton>
+                    <IconButton label="Deactivate" danger onClick={() => void deactivate(customer)}><Trash2 size={16} /></IconButton>
                   </div>
                 </td>
               </tr>
@@ -1437,7 +1455,27 @@ function CustomersAdmin({
         {filteredCustomers.length === 0 && <div className="empty-support"><Users size={24} /><strong>No matching users</strong><span>Try changing the search or filters.</span></div>}
       </div>
       {editing && <CustomerForm customer={editing === "new" ? undefined : editing} clientDirectory={state.clientDirectory} allowSuperAdmin={allowSuperAdmin} onClose={() => setEditing(null)} onSave={save} />}
-      {clientImportOpen && <ClientImportDialog state={state} update={update} onClose={() => setClientImportOpen(false)} />}
+      {temporaryCredentials && (
+        <Modal title="Temporary credentials" onClose={() => setTemporaryCredentials(null)}>
+          <div className="credential-card">
+            <p>Share these temporary credentials securely. The password is shown only once.</p>
+            <label>Email<input value={temporaryCredentials.email} readOnly /></label>
+            <label>Temporary password<input value={temporaryCredentials.password} readOnly /></label>
+            <div className="modal-actions">
+              <button
+                className="button outline"
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(
+                  `FuelSearch portal\nEmail: ${temporaryCredentials.email}\nTemporary password: ${temporaryCredentials.password}`,
+                )}
+              >
+                Copy credentials
+              </button>
+              <button className="button primary" type="button" onClick={() => setTemporaryCredentials(null)}>Done</button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1467,6 +1505,7 @@ function CustomerForm({ customer, clientDirectory, allowSuperAdmin, onClose, onS
     setForm((current) => ({
       ...current,
       role,
+      clientName: role === "customer" ? current.clientName : current.clientName || "FuelSearch",
       adminPermissions: role === "admin" ? normalizeAdminPermissions(current.adminPermissions) : undefined,
     }));
   };
@@ -1494,7 +1533,7 @@ function CustomerForm({ customer, clientDirectory, allowSuperAdmin, onClose, onS
         <p className="form-intro">{customer ? "Update the details for this user account." : "Create a new portal user and add their invoice details."}</p>
 
         <label>Email *<input type="email" value={form.email} onChange={(event) => set("email", event.target.value)} required /></label>
-        <label>Client Name <span>(search imported clients; must match exactly)</span><input list="client-directory-options" value={form.clientName} onChange={(event) => selectClient(event.target.value)} placeholder="Start typing a client name..." required /><datalist id="client-directory-options">{clientDirectory.map((client) => <option key={client.id} value={client.clientName}>{client.contactPerson ?? client.email ?? ""}</option>)}</datalist></label>
+        <label>Client Name {form.role === "customer" ? "*" : <span>(not required for admins)</span>}<input list="client-directory-options" value={form.clientName} onChange={(event) => selectClient(event.target.value)} placeholder={form.role === "customer" ? "Enter the company name..." : "FuelSearch"} required={form.role === "customer"} /><datalist id="client-directory-options">{clientDirectory.map((client) => <option key={client.id} value={client.clientName}>{client.contactPerson ?? client.email ?? ""}</option>)}</datalist></label>
         <label>Contact Person<input value={form.displayName} onChange={(event) => set("displayName", event.target.value)} /></label>
 
         <label>Role<select className="role-select" value={form.role} onChange={(event) => setRole(event.target.value as Role)}>
@@ -1551,41 +1590,6 @@ function CustomerForm({ customer, clientDirectory, allowSuperAdmin, onClose, onS
   );
 }
 
-function ClientImportDialog({ state, update, onClose }: { state: AppState; update: (next: Partial<AppState>) => void; onClose: () => void }) {
-  const [filename, setFilename] = useState("");
-  const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
-  const [message, setMessage] = useState("");
-  const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setFilename(file.name);
-    setClients(mapClientRows(await parseWorkbookRows(file)));
-  };
-  const commit = () => {
-    const byName = new Map(state.clientDirectory.map((client) => [client.clientName, client]));
-    clients.forEach((client) => byName.set(client.clientName, client));
-    const actorEmail = state.currentUser?.email ?? "unknown";
-    update({
-      clientDirectory: Array.from(byName.values()).sort((a, b) => a.clientName.localeCompare(b.clientName)),
-      activityLogs: [{
-        id: makeId("activity"),
-        action: "Imported client directory",
-        adminEmail: actorEmail,
-        details: `${clients.length} clients imported from ${filename}`,
-        performedAt: new Date().toISOString(),
-      }, ...state.activityLogs],
-    });
-    setMessage(`${clients.length} clients are now available in the Add User search.`);
-  };
-  return (
-    <Modal title="Import Client List" onClose={onClose} wide>
-      <div className="import-drop"><Upload size={28} /><strong>Choose the FuelSearch client export</strong><p>Supports .xlsx, .xls, and .csv. Existing directory entries are updated by exact Client Name.</p><input type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} /></div>
-      {clients.length > 0 && <div className="client-import-preview"><div className="section-head"><div><h2>{filename}</h2><p>{clients.length} clients detected. Previewing the first 8.</p></div><button className="button primary" onClick={commit}>Import {clients.length} Clients</button></div><div className="table-card compact"><table><thead><tr><th>Client Name</th><th>Contact Person</th><th>Email</th><th>Pricing Tier</th><th>Balance</th></tr></thead><tbody>{clients.slice(0, 8).map((client) => <tr key={client.id}><td>{client.clientName}</td><td>{client.contactPerson ?? "-"}</td><td>{client.email ?? "-"}</td><td>{client.pricingTier ?? "-"}</td><td>{money(client.balance)}</td></tr>)}</tbody></table></div></div>}
-      {message && <p className="success-note"><CheckCircle2 size={16} /> {message}</p>}
-    </Modal>
-  );
-}
-
 function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partial<AppState>) => void }) {
   const location = useLocation();
   const currentAdmin = getSignedInAdmin(state);
@@ -1595,6 +1599,7 @@ function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partia
   const [requestSource, setRequestSource] = useState<"All" | "Customer" | "Admin">("All");
   const [selected, setSelected] = useState<Issue | null>(null);
   const [creating, setCreating] = useState(false);
+  const [operationError, setOperationError] = useState("");
   const categories = Array.from(new Set(state.issues.map((issue) => issue.category))).sort();
   const filtered = state.issues
     .filter((issue) => {
@@ -1603,9 +1608,16 @@ function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partia
       return (!search || haystack.includes(search.toLowerCase())) && (status === "All" || issue.status === status) && (category === "All" || issue.category === category) && (requestSource === "All" || sourceType === requestSource);
     })
     .sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt));
-  const saveIssue = (issue: Issue) => {
-    update({ issues: state.issues.map((item) => item.id === issue.id ? issue : item) });
-    setSelected(null);
+  const saveIssue = async (issue: Issue) => {
+    setOperationError("");
+    try {
+      await updateIssue(issue);
+      void writeActivityLog("Updated support request", issue.title).catch(() => undefined);
+      update({ issues: state.issues.map((item) => item.id === issue.id ? issue : item) });
+      setSelected(null);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Could not update the support request.");
+    }
   };
 
   useEffect(() => {
@@ -1614,10 +1626,9 @@ function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partia
     }
   }, [location.pathname, state.issues, state.supportNotificationsSeenAt]);
 
-  const createRequest = (payload: { title: string; description: string; category: string; priority: IssuePriority; orderRef?: string }) => {
+  const createRequest = async (payload: { title: string; description: string; category: string; priority: IssuePriority; orderRef?: string }) => {
     const now = new Date().toISOString();
-    update({
-      issues: [{
+    const draft: Issue = {
         id: makeId("request"),
         ...payload,
         status: "Open",
@@ -1625,9 +1636,16 @@ function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partia
         source: "Admin Portal",
         loggedAt: now,
         updatedAt: now,
-      }, ...state.issues],
-    });
-    setCreating(false);
+    };
+    setOperationError("");
+    try {
+      const saved = await createIssue(draft);
+      void writeActivityLog("Created support request", saved.title).catch(() => undefined);
+      update({ issues: [saved, ...state.issues] });
+      setCreating(false);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Could not create the support request.");
+    }
   };
   return (
     <div className="page-stack support-page">
@@ -1635,6 +1653,7 @@ function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partia
         <div><h1>Support & Requests</h1><p>Manage reported problems, data corrections, feature ideas, and portal update requests.</p></div>
         <button className="button primary" onClick={() => setCreating(true)}><MessageSquarePlus size={16} /> New Request</button>
       </div>
+      {operationError && <p className="auth-message auth-error" role="alert">{operationError}</p>}
       <div className="support-summary">
         <SummaryCard icon={<LifeBuoy />} label="Open" value={String(state.issues.filter((issue) => issue.status === "Open").length)} />
         <SummaryCard icon={<History />} label="In Progress" value={String(state.issues.filter((issue) => issue.status === "In Progress").length)} />
@@ -1666,8 +1685,8 @@ function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partia
         </table>
         {filtered.length === 0 && <div className="empty-support"><LifeBuoy size={24} /><strong>No matching requests</strong><span>Try changing the search or filters.</span></div>}
       </div>
-      {creating && <IssueDialog onClose={() => setCreating(false)} onSubmit={createRequest} />}
-      {selected && <SupportRequestModal issue={selected} onClose={() => setSelected(null)} onSave={saveIssue} />}
+      {creating && <IssueDialog onClose={() => setCreating(false)} onSubmit={(payload) => void createRequest(payload)} />}
+      {selected && <SupportRequestModal issue={selected} onClose={() => setSelected(null)} onSave={(issue) => void saveIssue(issue)} />}
     </div>
   );
 }

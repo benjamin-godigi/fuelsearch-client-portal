@@ -54,8 +54,10 @@ button { cursor: pointer; }
 .auth-form label { color: var(--navy); font-size: 14px; font-weight: 700; }
 .auth-form input { min-height: 44px; }
 .auth-submit { width: 100%; min-height: 46px; }
-.auth-text-button { justify-self: center; border: 0; background: transparent; color: var(--red); font-weight: 700; padding: 5px; }
-.auth-text-button:hover { text-decoration: underline; }
+.credential-card { display: grid; gap: 14px; }
+.credential-card p { margin: 0; color: var(--muted); line-height: 1.5; }
+.credential-card label { display: grid; gap: 6px; color: var(--navy); font-weight: 700; }
+.credential-card input { min-height: 44px; }
 .auth-message { border-radius: 4px; padding: 10px 12px; font-size: 14px; line-height: 1.45; }
 .auth-error { background: #fff0ef; color: #9e2822; border: 1px solid #f1c4c0; }
 .auth-success { background: #edf9f1; color: #076b32; border: 1px solid #bfe3cc; }

@@ -1,0 +1,4 @@
+project_id = "efjnltsombshrimuohtb"
+
+[functions.manage-portal-user]
+verify_jwt = false

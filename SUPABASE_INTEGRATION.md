@@ -85,22 +85,20 @@ In Supabase Dashboard:
 
 1. Open **Authentication > Providers > Email**, leave Email enabled, and
    disable new-user signup after approved users have been provisioned.
-2. Open **Authentication > SMTP Settings** and configure a production SMTP
-   provider for password-reset messages.
-3. Open **Authentication > URL Configuration**.
-4. Set **Site URL** to the deployed portal URL.
-5. Add local development as a redirect URL:
+2. Open **Authentication > URL Configuration**.
+3. Set **Site URL** to the deployed portal URL.
+4. Add local development as a redirect URL:
    `http://127.0.0.1:5173/**`
-6. Add the deployed portal URL as another redirect, for example:
+5. Add the deployed portal URL as another redirect, for example:
    `https://portal.example.com/**`
 
 The frontend exposes no signup action. After any sign-in, the application
 requires a trusted `profiles` row for that exact Auth user UUID; users without
 one are immediately signed out and cannot read portal data.
 
-The built-in Supabase mail service is intended for testing and is limited to
-two email messages per hour. Password sign-in does not send an email on each
-login, but password recovery still requires reliable custom SMTP.
+The built-in Supabase mail service is intentionally not used by the portal.
+Authorized admins issue a new temporary password from **Admin > Users**, and
+the user must replace it on first sign-in.
 
 To add a customer:
 
@@ -109,20 +107,17 @@ To add a customer:
 3. Insert a `profiles` row for that UUID and assign the correct role.
 4. Insert a `clients` row whose `user_id` is that UUID.
 5. Import transactions using that client's `id`.
-6. Ask the customer to use **Forgot your password?** once to set a password.
+6. Share the one-time temporary password securely. The portal forces the user
+   to replace it on first sign-in.
 
 One Auth user may own multiple client rows. This supports an operator who needs
 to view more than one company without introducing teams or membership tables.
 
 ### Password Recovery
 
-`requestPasswordReset()` redirects to `/reset-password`. The page accepts the
-temporary recovery session only long enough to call `updatePassword()`, then
-signs the user out so they can log in normally with the new password.
-
-Configure custom SMTP before asking users to use this flow. SMTP host, port,
-username, password, sender name, and sender address are stored in Supabase
-Dashboard and are never frontend environment variables.
+An admin can issue a new temporary password from the Users page. The protected
+Edge Function updates Supabase Auth, reactivates the profile, and restores the
+first-login password-change requirement. No email is sent.
 
 ## 4. Environment Variables
 
@@ -163,7 +158,44 @@ enabled = true
 Do not place `SUPABASE_ACCESS_TOKEN`, an `sb_secret_` key, or a legacy
 `service_role` key in `.env.local`, frontend code, or any `VITE_` variable.
 
-## 5. Useful Provisioning SQL
+## 5. Production Operations
+
+Apply all repository migrations, then deploy the protected user-management
+function:
+
+```powershell
+supabase link --project-ref efjnltsombshrimuohtb
+supabase db push
+supabase functions deploy manage-portal-user
+```
+
+Generate a strong one-time bootstrap secret and store it in Supabase:
+
+```powershell
+supabase secrets set PORTAL_BOOTSTRAP_SECRET="a-long-random-one-time-secret"
+```
+
+Run the bootstrap script:
+
+```powershell
+.\scripts\bootstrap-super-admin.ps1
+```
+
+The function creates or promotes `benjamin.godigi@gmail.com` as the first
+active super admin with display name `Benjamin`. It returns a temporary
+password once and refuses bootstrap requests after an active super admin
+exists. Remove the secret immediately afterward:
+
+```powershell
+supabase secrets unset PORTAL_BOOTSTRAP_SECRET
+```
+
+All later users are created from **Admin > Users**. The Edge Function validates
+the caller's JWT and trusted profile permissions, creates the Auth user with a
+temporary password, writes the profile/client records, and forces a permanent
+password change on first login.
+
+## 6. Useful Provisioning SQL
 
 After creating a user in Supabase Auth, replace the example values:
 

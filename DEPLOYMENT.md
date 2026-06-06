@@ -64,11 +64,25 @@ Password-reset redirects must match one of these allowed URLs.
 Disable new-user signup in **Authentication > Providers > Email** after all
 approved users have been provisioned. Existing users can still sign in.
 
-For password recovery, configure a production SMTP provider under **Supabase
-Dashboard > Authentication > SMTP Settings**. Do not rely on Supabase's
-best-effort built-in mail service, which is limited to two email messages per
-hour. SMTP credentials belong in Supabase only and must not be added to Vercel
-or the React application.
+Password recovery is handled by an authorized portal administrator issuing a
+new temporary password. This avoids Supabase's built-in email sending limit.
+Custom SMTP is optional until email-based recovery is enabled later.
+
+## Supabase Release
+
+The frontend depends on the latest database migration and
+`manage-portal-user` Edge Function. Apply and deploy those before publishing
+the matching frontend commit:
+
+```powershell
+supabase link --project-ref efjnltsombshrimuohtb
+supabase db push
+supabase functions deploy manage-portal-user
+```
+
+Use `scripts/bootstrap-super-admin.ps1` once to create the initial Benjamin
+super-admin account. See `SUPABASE_INTEGRATION.md` for the one-time secret
+setup and removal steps.
 
 ## Release Checks
 

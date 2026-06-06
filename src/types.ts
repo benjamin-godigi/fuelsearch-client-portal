@@ -16,6 +16,7 @@ export interface PortalUser {
   displayName: string;
   role: Role;
   clientName?: string;
+  mustChangePassword?: boolean;
 }
 
 export interface Customer {
