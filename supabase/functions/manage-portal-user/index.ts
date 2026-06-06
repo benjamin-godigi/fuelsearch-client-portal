@@ -171,7 +171,7 @@ Deno.serve(async (request) => {
     }
 
     if (payload.role === "customer") {
-      const { error: clientError } = await admin.from("clients").insert({
+      const clientValues = {
         user_id: userId,
         name: payload.clientName!.trim(),
         contact_name: payload.displayName.trim(),
@@ -179,7 +179,23 @@ Deno.serve(async (request) => {
         vat_number: payload.vatNumber?.trim() || null,
         registration_number: payload.registration?.trim() || null,
         ...splitAddress(payload.address),
-      });
+        is_active: true,
+      };
+      const { data: clients, error: findClientError } = await admin
+        .from("clients")
+        .select("id, name, user_id");
+      if (findClientError) return json({ error: findClientError.message }, 400);
+      const existingClient = clients?.find(
+        (client) => client.name.trim().toLowerCase() === payload.clientName!.trim().toLowerCase(),
+      );
+      if (existingClient?.user_id && existingClient.user_id !== userId) {
+        if (createdNewUser) await admin.auth.admin.deleteUser(userId);
+        return json({ error: `Client "${payload.clientName}" is already linked to another user.` }, 409);
+      }
+      const clientQuery = existingClient
+        ? admin.from("clients").update(clientValues).eq("id", existingClient.id)
+        : admin.from("clients").insert(clientValues);
+      const { error: clientError } = await clientQuery;
       if (clientError) {
         if (createdNewUser) await admin.auth.admin.deleteUser(userId);
         return json({ error: clientError.message }, 400);

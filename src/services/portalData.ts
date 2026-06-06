@@ -17,7 +17,7 @@ import type { AppState } from "./store";
 
 interface ClientRow {
   id: number;
-  user_id: string;
+  user_id: string | null;
   name: string;
   contact_name: string | null;
   contact_email: string | null;
@@ -29,6 +29,7 @@ interface ClientRow {
   city: string | null;
   province: string | null;
   postal_code: string | null;
+  is_active: boolean;
   created_at: string;
 }
 
@@ -136,13 +137,16 @@ export async function loadPortalData(
     throw new Error("Your login is valid, but no portal profile is linked to it yet.");
   }
 
-  const { data: clientData, error: clientError } = await supabase
+  let clientQuery = supabase
     .from("clients")
     .select(
-      "id, user_id, name, contact_name, contact_email, phone, vat_number, registration_number, address_line_1, address_line_2, city, province, postal_code, created_at",
+      "id, user_id, name, contact_name, contact_email, phone, vat_number, registration_number, address_line_1, address_line_2, city, province, postal_code, is_active, created_at",
     )
-    .eq("is_active", true)
     .order("name");
+  if (signedInProfile.role === "customer") {
+    clientQuery = clientQuery.eq("is_active", true);
+  }
+  const { data: clientData, error: clientError } = await clientQuery;
 
   if (clientError) throw clientError;
 

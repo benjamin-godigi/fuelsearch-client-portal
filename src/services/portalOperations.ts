@@ -7,16 +7,44 @@ async function currentUser() {
   return data.user;
 }
 
-async function clientIdForName(clientName: string) {
-  const { data, error } = await requireSupabase()
+function normalizedClientName(clientName: string) {
+  return clientName.trim().toLowerCase();
+}
+
+async function clientIdsForNames(clientNames: string[]) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
     .from("clients")
-    .select("id")
-    .eq("name", clientName.trim())
-    .eq("is_active", true)
-    .maybeSingle();
+    .select("id, name");
   if (error) throw error;
-  if (!data) throw new Error(`No active client named "${clientName}" exists.`);
-  return data.id as number;
+
+  const idsByName = new Map(
+    (data ?? []).map((client) => [normalizedClientName(String(client.name)), client.id as number]),
+  );
+  const missingClients = [...new Map(
+    clientNames
+      .map((name) => name.trim())
+      .filter(Boolean)
+      .filter((name) => !idsByName.has(normalizedClientName(name)))
+      .map((name) => [normalizedClientName(name), name]),
+  ).values()];
+
+  if (missingClients.length > 0) {
+    const { data: created, error: insertError } = await supabase
+      .from("clients")
+      .insert(missingClients.map((name) => ({
+        name,
+        user_id: null,
+        is_active: false,
+      })))
+      .select("id, name");
+    if (insertError) throw insertError;
+    for (const client of created ?? []) {
+      idsByName.set(normalizedClientName(String(client.name)), client.id as number);
+    }
+  }
+
+  return idsByName;
 }
 
 async function depotIdForName(depotName: string) {
@@ -41,9 +69,13 @@ async function depotIdForName(depotName: string) {
   return created.id as number;
 }
 
-async function transactionRow(transaction: Transaction) {
+async function transactionRow(transaction: Transaction, clientId?: number) {
+  const resolvedClientId = clientId ?? (await clientIdsForNames([transaction.clientName]))
+    .get(normalizedClientName(transaction.clientName));
+  if (!resolvedClientId) throw new Error(`Could not create or find client "${transaction.clientName}".`);
+
   return {
-    client_id: await clientIdForName(transaction.clientName),
+    client_id: resolvedClientId,
     depot_id: await depotIdForName(transaction.depot),
     order_number: transaction.order.trim(),
     status: transaction.status,
@@ -85,9 +117,11 @@ export async function deleteTransaction(transactionId: string) {
 }
 
 export async function importTransactions(transactions: Transaction[], batch: ImportBatch) {
+  const clientIds = await clientIdsForNames(transactions.map((transaction) => transaction.clientName));
   const rows = [];
   for (const transaction of transactions) {
-    rows.push(await transactionRow(transaction));
+    const clientId = clientIds.get(normalizedClientName(transaction.clientName));
+    rows.push(await transactionRow(transaction, clientId));
   }
 
   const supabase = requireSupabase();
