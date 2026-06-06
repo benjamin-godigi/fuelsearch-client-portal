@@ -16,6 +16,7 @@ import {
   EyeOff,
   FileText,
   Gauge,
+  HelpCircle,
   History,
   KeyRound,
   LifeBuoy,
@@ -60,7 +61,15 @@ import {
   markIssueSeen,
 } from "./services/portalOperations";
 
-const LOGO_URL = "https://fuelsearch.co.za/wp-content/uploads/Logo.svg";
+const LOGO_URL = "/fuelsearch-logo.svg";
+const PREVIEW_USER_KEY = "fuelsearch-preview-user-id";
+const TRANSACTION_PAGE_SIZE = 100;
+const BANKING_DETAILS = [
+  { bank: "FNB", account: "63026817544", name: "FUELSEARCH", branch: "250655" },
+  { bank: "NEDBANK", account: "1238798306", name: "FUELSEARCH", branch: "198765" },
+  { bank: "ABSA", account: "4105937663", name: "FUELSEARCH", branch: "632005" },
+  { bank: "STANDARD BANK", account: "10184309490", name: "FUELSEARCH", branch: "001509" },
+] as const;
 const STATUSES: TransactionStatus[] = ["Completed", "Pending", "Open", "Expired", "Cancelled"];
 const ISSUE_STATUSES: IssueStatus[] = ["Open", "In Progress", "Resolved"];
 const ISSUE_PRIORITIES: IssuePriority[] = ["Low", "Medium", "High", "Urgent"];
@@ -288,6 +297,7 @@ function Modal({ title, children, onClose, wide = false }: { title: string; chil
 function App() {
   const [state, setState] = useState<AppState>(defaultState);
   const [signedInUser, setSignedInUser] = useState<PortalUser | null>(null);
+  const [previewUserId, setPreviewUserId] = useState(() => sessionStorage.getItem(PREVIEW_USER_KEY) ?? "");
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState("");
 
@@ -295,7 +305,25 @@ function App() {
   const hydrateSupabaseUser = useCallback(async (user: User) => {
     try {
       const portalData = await loadPortalData(user);
-      setState((current) => ({ ...current, ...portalData }));
+      const previewUser = previewUserId
+        ? portalData.customers.find((customer) => customer.id === previewUserId)
+        : undefined;
+      const previewPortalUser: PortalUser | undefined = previewUser ? {
+        id: previewUser.id,
+        email: previewUser.email,
+        displayName: previewUser.displayName,
+        role: previewUser.role,
+        clientName: previewUser.role === "customer" ? previewUser.clientName : undefined,
+      } : undefined;
+      if (previewUserId && !previewPortalUser) {
+        sessionStorage.removeItem(PREVIEW_USER_KEY);
+        setPreviewUserId("");
+      }
+      setState((current) => ({
+        ...current,
+        ...portalData,
+        currentUser: previewPortalUser ?? portalData.currentUser,
+      }));
       setSignedInUser(portalData.currentUser);
       setAuthError("");
     } catch (error) {
@@ -306,7 +334,7 @@ function App() {
     } finally {
       setAuthReady(true);
     }
-  }, []);
+  }, [previewUserId]);
 
   useEffect(() => {
     clearLegacyPortalState();
@@ -354,13 +382,21 @@ function App() {
     await signOutFromSupabase();
     setState(defaultState);
     setSignedInUser(null);
+    setPreviewUserId("");
+    sessionStorage.removeItem(PREVIEW_USER_KEY);
   };
 
-  const previewAs = (user: PortalUser) => update({ currentUser: user });
+  const previewAs = (user: PortalUser) => {
+    setPreviewUserId(user.id);
+    sessionStorage.setItem(PREVIEW_USER_KEY, user.id);
+    update({ currentUser: user });
+  };
   const exitPreview = () => {
+    setPreviewUserId("");
+    sessionStorage.removeItem(PREVIEW_USER_KEY);
     if (signedInUser) update({ currentUser: signedInUser });
   };
-  const isPreviewing = Boolean(signedInUser && state.currentUser && signedInUser.id !== state.currentUser.id);
+  const isPreviewing = Boolean(previewUserId && signedInUser && state.currentUser && signedInUser.id !== state.currentUser.id);
 
   if (!authReady) {
     return (
@@ -593,6 +629,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
   const [issueTx, setIssueTx] = useState<Transaction | null>(null);
   const [issueError, setIssueError] = useState("");
   const [requestsOpen, setRequestsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const availableClients = state.clientDirectory.map((client) => client.clientName);
   const [clientName, setClientName] = useState(
     state.currentUser?.clientName ?? availableClients[0] ?? "",
@@ -653,6 +690,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
 
   return (
     <main className="statement-page">
+      {exitPreview && <div className="preview-banner"><Shield size={16} /><span>Previewing the customer portal as <strong>{state.currentUser?.displayName}</strong></span><button className="button ghost" onClick={exitPreview}>Return to Admin Portal</button></div>}
       <header className="statement-top">
         <div>
           <img src={LOGO_URL} alt="FuelSearch" className="brand-logo" />
@@ -660,7 +698,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
         </div>
         <div className="top-actions">
           <strong>Hi, {state.currentUser?.displayName}</strong>
-          {exitPreview && <button className="button ghost" onClick={exitPreview}><Shield size={16} /> Return to Super Admin</button>}
+          <button className="button ghost" onClick={() => setHelpOpen(true)}><HelpCircle size={16} /> Help</button>
           <button className="button dark" onClick={logout}>
             <LogOut size={16} /> Logout
           </button>
@@ -748,6 +786,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
       {issueError && <p className="auth-message auth-error statement-action-error" role="alert">{issueError}</p>}
       {issueTx && <IssueDialog tx={issueTx.order ? issueTx : undefined} onClose={() => setIssueTx(null)} onSubmit={(payload) => void reportIssue(payload)} />}
       {requestsOpen && <CustomerRequestsDialog issues={customerIssues} onClose={() => setRequestsOpen(false)} onSeen={async (issue) => { await markIssueSeen(issue.id); update({ issues: state.issues.map((item) => item.id === issue.id ? { ...item, customerSeenAt: new Date().toISOString() } : item) }); }} />}
+      {helpOpen && <Modal title="Help & User Guide" onClose={() => setHelpOpen(false)} wide><HelpGuide role="customer" embedded /></Modal>}
     </main>
   );
 }
@@ -796,7 +835,7 @@ function InvoiceModal({ tx, customer, onClose, onReport }: { tx: Transaction; cu
         </table>
         <section className="banking">
           <h4>Banking Details</h4>
-          {["FNB 63026817544", "NEDBANK 1238798306", "ABSA 4105937663", "STANDARD BANK 10184309490"].map((bank) => <div key={bank}>{bank}<br /><span>Name: FUELSEARCH</span></div>)}
+          {BANKING_DETAILS.map((bank) => <div key={bank.bank}><strong>{bank.bank}</strong><span>Account: {bank.account}</span><span>Name: {bank.name}</span><span>Branch: {bank.branch}</span></div>)}
         </section>
       </div>
     </Modal>
@@ -916,6 +955,7 @@ function AdminLayout({
               {unreadSupportCount > 0 && <span className="nav-badge">{unreadSupportCount > 99 ? "99+" : unreadSupportCount}</span>}
             </NavLink>
           )}
+          <NavLink to="/admin/help"><HelpCircle size={18} /> Help</NavLink>
         </nav>
         <div className="sidebar-user">
           <div><strong>{currentAdmin?.displayName ?? state.currentUser?.displayName ?? "Admin"}</strong><span>{currentAdmin?.email ?? state.currentUser?.email ?? ""}</span></div>
@@ -1041,7 +1081,7 @@ function AdminLayout({
             }
           />
           <Route path="issues" element={canManageSupport ? <IssuesAdmin state={state} update={update} /> : <Navigate to="/admin" replace />} />
-          <Route path="help" element={<Navigate to="/admin" replace />} />
+          <Route path="help" element={<HelpGuide role="admin" />} />
           <Route path="activity-log" element={canViewActivityLog ? <ActivityLogPage state={state} /> : <Navigate to="/admin" replace />} />
         </Routes>
       </section>
@@ -1068,7 +1108,7 @@ function Dashboard({ state }: { state: AppState }) {
         <SimpleTxTable transactions={recentTransactions} numbered />
         {remainingTransactions > 0 && (
           <div className="load-more-row">
-            <button className="button outline" onClick={() => setVisibleTransactions((count) => count + 5)}>
+            <button className="button outline" onClick={() => setVisibleTransactions((count) => count + 20)}>
               <ChevronDown size={16} /> Load More ({remainingTransactions} remaining)
             </button>
           </div>
@@ -1092,7 +1132,7 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
   const [status, setStatus] = useState<TransactionStatus | "All">("All");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [visibleTransactions, setVisibleTransactions] = useState(5);
+  const [visibleTransactions, setVisibleTransactions] = useState(TRANSACTION_PAGE_SIZE);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editing, setEditing] = useState<Transaction | "new" | null>(null);
   const [viewing, setViewing] = useState<Transaction | null>(null);
@@ -1111,7 +1151,7 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
   const remainingTransactions = Math.max(0, filtered.length - visibleTransactions);
 
   useEffect(() => {
-    setVisibleTransactions(10);
+    setVisibleTransactions(TRANSACTION_PAGE_SIZE);
   }, [search, status, from, to, state.transactions.length]);
   const saveTx = async (tx: Transaction) => {
     setOperationError("");
@@ -1163,7 +1203,7 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
           <button
             className="button outline"
             disabled={remainingTransactions === 0}
-            onClick={() => setVisibleTransactions((count) => count + 10)}
+            onClick={() => setVisibleTransactions((count) => count + TRANSACTION_PAGE_SIZE)}
           >
             {remainingTransactions > 0
               ? <><ChevronDown size={16} /> Load More ({remainingTransactions} remaining)</>
@@ -1796,12 +1836,32 @@ function SupportRequestModal({ issue, onClose, onSave }: { issue: Issue; onClose
   );
 }
 
-function HelpGuide() {
-  const sections = ["System Overview", "Getting Started", "Admin Dashboard", "Adding New Users", "Portal Login", "Transactions & Export", "CSV Import Guide", "Import History", "Customer Statement", "Invoices & PDF Export"];
+function HelpGuide({ role, embedded = false }: { role: "admin" | "customer"; embedded?: boolean }) {
+  const [search, setSearch] = useState("");
+  const topics = [
+    { roles: ["admin", "customer"], title: "Signing in and passwords", body: "Sign in with your approved email and password. Temporary passwords must be replaced once with a permanent password of at least 12 characters. Use the eye icon to check what you typed." },
+    { roles: ["admin"], title: "Previewing a customer portal", body: "Super admins can choose a user from Preview portal as. A preview banner remains visible while testing. Select Return to Admin Portal when finished; preview mode survives normal session refreshes in the same browser tab." },
+    { roles: ["admin"], title: "Adding users and linking companies", body: "Open Users, select Add User, choose an existing client company, and enter a unique email. Multiple users may share one company statement. Copy the one-time credentials and send them securely." },
+    { roles: ["admin"], title: "Importing transactions", body: "Open Transactions > Import and select the FuelSearch XLSX, XLS, or CSV export. Imports run in batches with progress. Keep the window open until completion. Re-importing is safe because Order # updates existing records rather than duplicating them." },
+    { roles: ["admin"], title: "Older records and import history", body: "Older files may be imported later without removing newer transactions. Use Import History to confirm filenames and row counts. Export transactions before using Reset; Reset requires typing DELETE." },
+    { roles: ["admin"], title: "Managing transactions", body: "Search by client, filter status and dates, add or edit individual transactions, export all current transaction data, and load another 100 rows at a time." },
+    { roles: ["admin"], title: "Support and customer updates", body: "Open Support & Requests, review the request, change its status, and add resolution notes. Customers see the new status and response under My Requests and receive an unread alert." },
+    { roles: ["customer"], title: "Viewing your monthly statement", body: "Choose a month and status tab, then sort newest or oldest. Summary cards use completed transactions. Load More reveals additional statement rows." },
+    { roles: ["customer"], title: "Downloading statements", body: "Download CSV Statement exports every transaction for the selected month, including rows not currently visible. The current month is labelled Month-to-Date and includes an as-at date." },
+    { roles: ["customer"], title: "Invoices and PDFs", body: "Select View beside a transaction to open its invoice. Download PDF creates a branded FuelSearch invoice with transaction details, totals, and all banking details. Print remains available separately." },
+    { roles: ["customer"], title: "Reporting and tracking problems", body: "Use Support & Requests to report a transaction or general issue. Open My Requests to see Open, In Progress, or Resolved status, FuelSearch responses, and unread updates." },
+    { roles: ["admin", "customer"], title: "Troubleshooting", body: "Refresh the page after a deployment. If login fails, verify the email and password and contact a FuelSearch administrator for a temporary-password reset. If an import stops, read the displayed row number and retry the same file safely." },
+  ].filter((topic) => topic.roles.includes(role));
+  const query = search.trim().toLowerCase();
+  const filteredTopics = topics.filter((topic) => !query || `${topic.title} ${topic.body}`.toLowerCase().includes(query));
   return (
-    <div className="page-stack help-page">
-      <h1>Help & User Guide</h1><p>Everything you need to know about using the FuelSearch Portal</p>
-      <div className="help-layout"><aside>{sections.map((item, index) => <a href={`#${index}`} key={item} className={index === 0 ? "active" : ""}>{item}</a>)}</aside><article><h2>System Overview</h2><p>The FuelSearch Portal replaces customer-facing Google Sheets with a proper web app. It consists of the Admin Portal for staff and the Customer Statement for fleet operators.</p><div className="guide-grid"><div><Shield size={18} /><h3>Admin Portal</h3><ul><li>Dashboard with user count and recent transactions</li><li>Add and manage customer accounts</li><li>Import transactions via CSV or XLSX</li><li>View import history and activity logs</li><li>Manage customer support and feature requests</li></ul></div><div><Eye size={18} /><h3>Customer Portal</h3><ul><li>View their own statement only</li><li>Filter by month and status</li><li>Sort transactions newest or oldest first</li><li>Open per-transaction invoices</li><li>Report problems and request features or updates</li></ul></div></div><div className="info-box blue"><AlertCircle size={18} /><p><strong>Daily workflow:</strong> Export transactions from the FuelSearch app, then import the CSV or XLSX under Admin {">"} Transactions {">"} Import. The system upserts records by Order #, so re-importing is safe and will not duplicate data.</p></div></article></div>
+    <div className={`page-stack help-page ${embedded ? "help-embedded" : ""}`}>
+      {!embedded && <div><h1>Help & User Guide</h1><p>Practical instructions for using the FuelSearch Portal confidently.</p></div>}
+      <label className="help-search"><Search size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search help, for example: import, password, invoice..." /></label>
+      <div className="help-topic-grid">
+        {filteredTopics.map((topic) => <article key={topic.title} className="help-topic"><HelpCircle size={20} /><div><h2>{topic.title}</h2><p>{topic.body}</p></div></article>)}
+      </div>
+      {filteredTopics.length === 0 && <div className="empty-support"><Search size={24} /><strong>No matching help topics</strong><span>Try a shorter search such as “import” or “password”.</span></div>}
     </div>
   );
 }
@@ -1848,6 +1908,8 @@ async function downloadInvoicePdf(tx: Transaction, customer?: Customer) {
   const navy = [31, 68, 103] as const;
   const invoiceNumber = `INV-${tx.order}`;
   const fuelAmount = (tx.filledFuelL ?? 0) * (tx.fuelPricePerL ?? 0);
+  const logoData = await loadImageDataUrl(LOGO_URL).catch(() => null);
+  if (logoData) pdf.addImage(logoData, "PNG", 20, 11, 62, 12);
   pdf.setTextColor(...navy);
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(24);
@@ -1855,7 +1917,7 @@ async function downloadInvoicePdf(tx: Transaction, customer?: Customer) {
   pdf.setFontSize(8);
   pdf.text(`#${invoiceNumber}`, 195, 24, { align: "right" });
   pdf.setFontSize(10);
-  pdf.text("FUELSEARCH (PTY) LTD", 20, 18);
+  if (!logoData) pdf.text("FUELSEARCH (PTY) LTD", 20, 18);
   pdf.setFont("helvetica", "normal");
   pdf.setTextColor(90);
   pdf.setFontSize(7);
@@ -1928,13 +1990,15 @@ async function downloadInvoicePdf(tx: Transaction, customer?: Customer) {
   pdf.text("BANKING DETAILS", 20, 179);
   pdf.line(20, 183, 195, 183);
   pdf.setFontSize(8);
-  ["FNB 63026817544", "NEDBANK 1238798306", "ABSA 4105937663", "STANDARD BANK 10184309490"].forEach((bank, index) => {
+  BANKING_DETAILS.forEach((bank, index) => {
     const x = index % 2 === 0 ? 24 : 112;
     const y = index < 2 ? 193 : 213;
-    pdf.text(bank, x, y);
+    pdf.text(bank.bank, x, y);
     pdf.setFont("helvetica", "normal");
     pdf.setTextColor(90);
-    pdf.text("Name: FUELSEARCH", x, y + 5);
+    pdf.text(`Account: ${bank.account}`, x, y + 5);
+    pdf.text(`Name: ${bank.name}`, x, y + 10);
+    pdf.text(`Branch: ${bank.branch}`, x, y + 15);
     pdf.setFont("helvetica", "bold");
     pdf.setTextColor(...navy);
   });
@@ -1948,6 +2012,21 @@ async function downloadInvoicePdf(tx: Transaction, customer?: Customer) {
   pdf.text("FuelSearch (Pty) Ltd · Reg No. 2022/776599/07", 20, 276);
   pdf.text("info@fuelsearch.co.za · +27 74 1199 787", 195, 276, { align: "right" });
   pdf.save(`FuelSearch_Invoice_${invoiceNumber}.pdf`);
+}
+
+async function loadImageDataUrl(source: string) {
+  const response = await fetch(source);
+  if (!response.ok) throw new Error("Could not load invoice logo.");
+  const blob = await response.blob();
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not prepare invoice logo.");
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return canvas.toDataURL("image/png");
 }
 
 export default App;
