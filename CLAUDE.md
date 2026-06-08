@@ -49,17 +49,31 @@ Each scratchpad should include:
 
 ## Suggested Commands
 
-For a Vite / React / TypeScript app:
+This is a Vite / React / TypeScript app with Supabase. The actual `package.json`
+scripts are `dev`, `build`, `check`, and `preview` — there is no `lint`,
+`typecheck`, or `test` script.
+
+Run the project checks before opening a PR:
 
 ```bash
 npm install
-npm run lint
-npm run typecheck
-npm test
-npm run build
+npm run check            # TypeScript type-check (tsc)
+npm run build            # tsc + vite build (needs VITE_SUPABASE_* env vars)
+npm audit --omit=dev     # dependency audit
 ```
 
-Not every project has every script. If a script is missing, report it and use the closest available check.
+`npm run build` and `npm run dev` require `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_PUBLISHABLE_KEY` in a local `.env` (git-ignored; never commit it).
+
+Supabase tasks run through the CLI via `npx` (no global install needed):
+
+```bash
+npx supabase migration list --linked
+npx supabase db lint --linked --level warning
+npx supabase db push --linked --yes
+```
+
+See `HANDOFF.md` for full deployment and verification steps.
 
 ## Security Notes
 
