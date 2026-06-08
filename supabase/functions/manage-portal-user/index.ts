@@ -177,6 +177,16 @@ Deno.serve(async (request) => {
         : clients?.find((client) => client.name.trim().toLowerCase() === payload.clientName!.trim().toLowerCase());
       if (existingClient) {
         linkedClientId = existingClient.id;
+        // A newly added user must be able to sign in, so ensure the linked client is active.
+        // loadPortalData filters clients by is_active, and an inactive client blocks sign-in.
+        const { error: reactivateError } = await admin
+          .from("clients")
+          .update({ is_active: true })
+          .eq("id", existingClient.id);
+        if (reactivateError) {
+          if (createdNewUser) await admin.auth.admin.deleteUser(userId);
+          return json({ error: reactivateError.message, code: "CLIENT_REACTIVATE_FAILED" }, 400);
+        }
       } else {
         const { data: createdClient, error: clientCreateError } = await admin
           .from("clients")
