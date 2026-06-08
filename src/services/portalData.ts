@@ -137,7 +137,9 @@ export async function loadPortalData(
   const profiles = (profileData ?? []) as ProfileRow[];
   const signedInProfile = profiles.find((profile) => profile.user_id === user.id);
   if (!signedInProfile) {
-    throw new Error("Your login is valid, but no portal profile is linked to it yet.");
+    throw new Error(
+      "Your sign-in worked, but your portal account isn't fully set up yet. Please contact FuelSearch support.",
+    );
   }
 
   let clientQuery = supabase
@@ -155,7 +157,9 @@ export async function loadPortalData(
 
   const clients = (clientData ?? []) as ClientRow[];
   if (clients.length === 0 && signedInProfile.role === "customer") {
-    throw new Error("Your login is valid, but no active client account is linked to it yet.");
+    throw new Error(
+      "Your sign-in worked, but your company account isn't active yet. Please contact FuelSearch support to finish setting up your access.",
+    );
   }
 
   const transactionData: TransactionRow[] = [];
