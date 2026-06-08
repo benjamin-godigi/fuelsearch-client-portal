@@ -162,20 +162,40 @@ export async function loadPortalData(
     );
   }
 
-  const transactionData: TransactionRow[] = [];
   const pageSize = 1000;
-  for (let from = 0; ; from += pageSize) {
-    const { data: page, error: transactionError } = await supabase
+  const transactionColumns =
+    "id, order_number, status, vehicle_registration, driver_name, odometer_km, requested_litres, filled_litres, parking_nights, parking_fee, fuel_price_per_litre, total_amount, ordered_at, completed_at, expires_at, notes, clients(name), depots(name)";
+  const clientIds = clients.map((client) => client.id);
+  const transactionFilterIds = clientIds.length ? clientIds : [-1];
+
+  // Count first so the pages can be fetched concurrently instead of one-after-another.
+  const { count: transactionCount, error: transactionCountError } = await supabase
+    .from("transactions")
+    .select("id", { count: "exact", head: true })
+    .in("client_id", transactionFilterIds);
+  if (transactionCountError) throw transactionCountError;
+
+  const pageCount = Math.ceil((transactionCount ?? 0) / pageSize);
+  // ordered_at can tie; add the unique id as a tiebreaker so page boundaries are stable.
+  const fetchPage = (page: number) =>
+    supabase
       .from("transactions")
-      .select(
-        "id, order_number, status, vehicle_registration, driver_name, odometer_km, requested_litres, filled_litres, parking_nights, parking_fee, fuel_price_per_litre, total_amount, ordered_at, completed_at, expires_at, notes, clients(name), depots(name)",
-      )
-      .in("client_id", clients.map((client) => client.id).length ? clients.map((client) => client.id) : [-1])
+      .select(transactionColumns)
+      .in("client_id", transactionFilterIds)
       .order("ordered_at", { ascending: false })
-      .range(from, from + pageSize - 1);
-    if (transactionError) throw transactionError;
-    transactionData.push(...((page ?? []) as TransactionRow[]));
-    if ((page?.length ?? 0) < pageSize) break;
+      .order("id", { ascending: false })
+      .range(page * pageSize, page * pageSize + pageSize - 1);
+
+  const transactionData: TransactionRow[] = [];
+  const concurrency = 6;
+  for (let start = 0; start < pageCount; start += concurrency) {
+    const batch = await Promise.all(
+      Array.from({ length: Math.min(concurrency, pageCount - start) }, (_, offset) => fetchPage(start + offset)),
+    );
+    for (const { data: page, error: transactionError } of batch) {
+      if (transactionError) throw transactionError;
+      transactionData.push(...((page ?? []) as TransactionRow[]));
+    }
   }
 
   const [{ data: issueData, error: issueError }, { data: activityData, error: activityError }, { data: importData, error: importError }] = await Promise.all([
