@@ -36,7 +36,6 @@ import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Iss
 import { AppState, clearLegacyPortalState, defaultState, makeId } from "./services/store";
 import { isSupabaseConfigured } from "./lib/supabase";
 import {
-  getSupabaseSession,
   onSupabaseAuthChange,
   signInWithPassword,
   signOutFromSupabase,
@@ -345,30 +344,28 @@ function App() {
     }
 
     let active = true;
-    void getSupabaseSession()
-      .then((session) => {
-        if (!active) return;
-        if (session?.user) {
-          void hydrateSupabaseUser(session.user);
-          return;
-        }
-        setState((current) => ({ ...current, currentUser: null }));
-        setAuthReady(true);
-      })
-      .catch((error) => {
-        if (!active) return;
-        setAuthError(error instanceof Error ? error.message : "Could not restore your session.");
-        setAuthReady(true);
-      });
+    // onAuthStateChange emits INITIAL_SESSION on subscribe, so it covers session restore too.
+    // Only these events warrant a full portal reload; TOKEN_REFRESHED (fired periodically)
+    // must not re-fetch the whole dataset.
+    const reloadEvents = new Set(["INITIAL_SESSION", "SIGNED_IN", "USER_UPDATED"]);
+    let loadedUserId: string | null = null;
 
-    const unsubscribe = onSupabaseAuthChange((_event, session) => {
+    const unsubscribe = onSupabaseAuthChange((event, session) => {
       if (!active) return;
-      if (session?.user) {
-        void hydrateSupabaseUser(session.user);
-      } else {
+      const user = session?.user ?? null;
+      if (!user) {
+        loadedUserId = null;
         setState((current) => ({ ...current, currentUser: null }));
         setAuthReady(true);
+        return;
       }
+      // Skip redundant reloads: non-reload events, or repeat events for an already-loaded user.
+      if (!reloadEvents.has(event) || (event !== "USER_UPDATED" && loadedUserId === user.id)) {
+        setAuthReady(true);
+        return;
+      }
+      loadedUserId = user.id;
+      void hydrateSupabaseUser(user);
     });
 
     return () => {
