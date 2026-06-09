@@ -1806,6 +1806,7 @@ function CustomerForm({ customer, clientDirectory, allowSuperAdmin, onClose, onS
 function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partial<AppState>) => void }) {
   const location = useLocation();
   const currentAdmin = getSignedInAdmin(state);
+  const canDeleteRequests = isSuperAdminRole(currentAdmin?.role);
   const [search, setSearch] = useState("");
   const [status, setStatusFilter] = useState<IssueStatus | "All">("All");
   const [category, setCategory] = useState("All");
@@ -1906,7 +1907,7 @@ function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partia
                 <td>
                   <div className="table-actions">
                     <IconButton label="Review request" onClick={() => setSelected(issue)}><Eye size={16} /></IconButton>
-                    <IconButton label="Delete request" danger onClick={() => void removeIssue(issue)}><Trash2 size={16} /></IconButton>
+                    {canDeleteRequests && <IconButton label="Delete request" danger onClick={() => void removeIssue(issue)}><Trash2 size={16} /></IconButton>}
                   </div>
                 </td>
               </tr>
