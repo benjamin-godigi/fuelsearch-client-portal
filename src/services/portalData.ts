@@ -200,6 +200,22 @@ export async function loadPortalData(
     }
   }
 
+  // Safety net against an unavailable or stale count (count came back null, or rows
+  // were inserted between the count and the page fetches): page sequentially from
+  // where the concurrent fetch ended until a short page confirms the real end. The
+  // equality only holds when every counted page came back full (a no-count run has
+  // pageCount 0 and an empty array, which also matches), so the common case where
+  // the last page was partial adds no extra request.
+  if (transactionData.length === pageCount * pageSize) {
+    for (let page = pageCount; ; page += 1) {
+      const { data, error: transactionError } = await fetchPage(page);
+      if (transactionError) throw transactionError;
+      const rows = (data ?? []) as TransactionRow[];
+      transactionData.push(...rows);
+      if (rows.length < pageSize) break;
+    }
+  }
+
   const [{ data: issueData, error: issueError }, { data: activityData, error: activityError }, { data: importData, error: importError }] = await Promise.all([
     supabase
       .from("issues")
