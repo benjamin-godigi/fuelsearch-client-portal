@@ -80,6 +80,8 @@ interface IssueRow {
   updated_at: string;
   customer_update_at: string | null;
   customer_seen_at: string | null;
+  client_id: number | null;
+  clients: Array<{ name: string }> | { name: string } | null;
 }
 
 interface ActivityLogRow {
@@ -177,7 +179,7 @@ export async function loadPortalData(
   const [{ data: issueData, error: issueError }, { data: activityData, error: activityError }, { data: importData, error: importError }] = await Promise.all([
     supabase
       .from("issues")
-      .select("id, title, description, category, priority, status, reported_by, source, order_reference, resolution_notes, created_at, updated_at, customer_update_at, customer_seen_at")
+      .select("id, title, description, category, priority, status, reported_by, source, order_reference, resolution_notes, created_at, updated_at, customer_update_at, customer_seen_at, client_id, clients(name)")
       .order("updated_at", { ascending: false }),
     supabase
       .from("activity_logs")
@@ -263,6 +265,7 @@ export async function loadPortalData(
     status: issue.status,
     reportedBy: issue.reported_by,
     source: issue.source,
+    clientName: String(relationValue(issue.clients, "name") ?? "") || undefined,
     orderRef: issue.order_reference ?? undefined,
     resolutionNotes: issue.resolution_notes ?? undefined,
     loggedAt: issue.created_at,

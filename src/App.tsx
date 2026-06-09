@@ -660,7 +660,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
   const completed = monthTx.filter((tx) => tx.status === "Completed");
   const totalLitres = completed.reduce((sum, tx) => sum + (tx.filledFuelL ?? 0), 0);
   const totalAmount = completed.reduce((sum, tx) => sum + tx.totalPrice, 0);
-  const customerIssues = state.issues.filter((issue) => issue.source === "Customer Statement");
+  const customerIssues = state.issues.filter((issue) => issue.source === "Customer Statement" && issue.clientName === clientName);
   const unreadIssueUpdates = customerIssues.filter((issue) =>
     issue.customerUpdateAt && (!issue.customerSeenAt || issue.customerUpdateAt > issue.customerSeenAt),
   );
@@ -674,6 +674,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
       status: "Open",
       reportedBy: clientName,
       source: "Customer Statement",
+      clientName,
       loggedAt: now,
       updatedAt: now,
       ...payload,
