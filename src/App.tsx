@@ -16,7 +16,6 @@ import {
   EyeOff,
   FileText,
   Gauge,
-  HelpCircle,
   History,
   KeyRound,
   LifeBuoy,
@@ -37,7 +36,6 @@ import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Iss
 import { AppState, clearLegacyPortalState, defaultState, makeId } from "./services/store";
 import { isSupabaseConfigured } from "./lib/supabase";
 import {
-  getSupabaseSession,
   onSupabaseAuthChange,
   signInWithPassword,
   signOutFromSupabase,
@@ -346,30 +344,28 @@ function App() {
     }
 
     let active = true;
-    void getSupabaseSession()
-      .then((session) => {
-        if (!active) return;
-        if (session?.user) {
-          void hydrateSupabaseUser(session.user);
-          return;
-        }
-        setState((current) => ({ ...current, currentUser: null }));
-        setAuthReady(true);
-      })
-      .catch((error) => {
-        if (!active) return;
-        setAuthError(error instanceof Error ? error.message : "Could not restore your session.");
-        setAuthReady(true);
-      });
+    // onAuthStateChange emits INITIAL_SESSION on subscribe, so it covers session restore too.
+    // Only these events warrant a full portal reload; TOKEN_REFRESHED (fired periodically)
+    // must not re-fetch the whole dataset.
+    const reloadEvents = new Set(["INITIAL_SESSION", "SIGNED_IN", "USER_UPDATED"]);
+    let loadedUserId: string | null = null;
 
-    const unsubscribe = onSupabaseAuthChange((_event, session) => {
+    const unsubscribe = onSupabaseAuthChange((event, session) => {
       if (!active) return;
-      if (session?.user) {
-        void hydrateSupabaseUser(session.user);
-      } else {
+      const user = session?.user ?? null;
+      if (!user) {
+        loadedUserId = null;
         setState((current) => ({ ...current, currentUser: null }));
         setAuthReady(true);
+        return;
       }
+      // Skip redundant reloads: non-reload events, or repeat events for an already-loaded user.
+      if (!reloadEvents.has(event) || (event !== "USER_UPDATED" && loadedUserId === user.id)) {
+        setAuthReady(true);
+        return;
+      }
+      loadedUserId = user.id;
+      void hydrateSupabaseUser(user);
     });
 
     return () => {
@@ -629,7 +625,6 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
   const [issueTx, setIssueTx] = useState<Transaction | null>(null);
   const [issueError, setIssueError] = useState("");
   const [requestsOpen, setRequestsOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
   const availableClients = state.clientDirectory.map((client) => client.clientName);
   const [clientName, setClientName] = useState(
     state.currentUser?.clientName ?? availableClients[0] ?? "",
@@ -698,7 +693,6 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
         </div>
         <div className="top-actions">
           <strong>Hi, {state.currentUser?.displayName}</strong>
-          <button className="button ghost" onClick={() => setHelpOpen(true)}><HelpCircle size={16} /> Help</button>
           <button className="button dark" onClick={logout}>
             <LogOut size={16} /> Logout
           </button>
@@ -786,7 +780,6 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
       {issueError && <p className="auth-message auth-error statement-action-error" role="alert">{issueError}</p>}
       {issueTx && <IssueDialog tx={issueTx.order ? issueTx : undefined} onClose={() => setIssueTx(null)} onSubmit={(payload) => void reportIssue(payload)} />}
       {requestsOpen && <CustomerRequestsDialog issues={customerIssues} onClose={() => setRequestsOpen(false)} onSeen={async (issue) => { await markIssueSeen(issue.id); update({ issues: state.issues.map((item) => item.id === issue.id ? { ...item, customerSeenAt: new Date().toISOString() } : item) }); }} />}
-      {helpOpen && <Modal title="Help & User Guide" onClose={() => setHelpOpen(false)} wide><HelpGuide role="customer" embedded /></Modal>}
     </main>
   );
 }
@@ -955,7 +948,6 @@ function AdminLayout({
               {unreadSupportCount > 0 && <span className="nav-badge">{unreadSupportCount > 99 ? "99+" : unreadSupportCount}</span>}
             </NavLink>
           )}
-          <NavLink to="/admin/help"><HelpCircle size={18} /> Help</NavLink>
         </nav>
         <div className="sidebar-user">
           <div><strong>{currentAdmin?.displayName ?? state.currentUser?.displayName ?? "Admin"}</strong><span>{currentAdmin?.email ?? state.currentUser?.email ?? ""}</span></div>
@@ -1081,7 +1073,6 @@ function AdminLayout({
             }
           />
           <Route path="issues" element={canManageSupport ? <IssuesAdmin state={state} update={update} /> : <Navigate to="/admin" replace />} />
-          <Route path="help" element={<HelpGuide role="admin" />} />
           <Route path="activity-log" element={canViewActivityLog ? <ActivityLogPage state={state} /> : <Navigate to="/admin" replace />} />
         </Routes>
       </section>
@@ -1833,36 +1824,6 @@ function SupportRequestModal({ issue, onClose, onSave }: { issue: Issue; onClose
       </div>
       <div className="modal-actions transaction-view-actions"><button className="button outline" onClick={onClose}>Cancel</button><button className="button primary" onClick={save}>Save Update</button></div>
     </Modal>
-  );
-}
-
-function HelpGuide({ role, embedded = false }: { role: "admin" | "customer"; embedded?: boolean }) {
-  const [search, setSearch] = useState("");
-  const topics = [
-    { roles: ["admin", "customer"], title: "Signing in and passwords", body: "Sign in with your approved email and password. Temporary passwords must be replaced once with a permanent password of at least 12 characters. Use the eye icon to check what you typed." },
-    { roles: ["admin"], title: "Previewing a customer portal", body: "Super admins can choose a user from Preview portal as. A preview banner remains visible while testing. Select Return to Admin Portal when finished; preview mode survives normal session refreshes in the same browser tab." },
-    { roles: ["admin"], title: "Adding users and linking companies", body: "Open Users, select Add User, choose an existing client company, and enter a unique email. Multiple users may share one company statement. Copy the one-time credentials and send them securely." },
-    { roles: ["admin"], title: "Importing transactions", body: "Open Transactions > Import and select the FuelSearch XLSX, XLS, or CSV export. Imports run in batches with progress. Keep the window open until completion. Re-importing is safe because Order # updates existing records rather than duplicating them." },
-    { roles: ["admin"], title: "Older records and import history", body: "Older files may be imported later without removing newer transactions. Use Import History to confirm filenames and row counts. Export transactions before using Reset; Reset requires typing DELETE." },
-    { roles: ["admin"], title: "Managing transactions", body: "Search by client, filter status and dates, add or edit individual transactions, export all current transaction data, and load another 100 rows at a time." },
-    { roles: ["admin"], title: "Support and customer updates", body: "Open Support & Requests, review the request, change its status, and add resolution notes. Customers see the new status and response under My Requests and receive an unread alert." },
-    { roles: ["customer"], title: "Viewing your monthly statement", body: "Choose a month and status tab, then sort newest or oldest. Summary cards use completed transactions. Load More reveals additional statement rows." },
-    { roles: ["customer"], title: "Downloading statements", body: "Download CSV Statement exports every transaction for the selected month, including rows not currently visible. The current month is labelled Month-to-Date and includes an as-at date." },
-    { roles: ["customer"], title: "Invoices and PDFs", body: "Select View beside a transaction to open its invoice. Download PDF creates a branded FuelSearch invoice with transaction details, totals, and all banking details. Print remains available separately." },
-    { roles: ["customer"], title: "Reporting and tracking problems", body: "Use Support & Requests to report a transaction or general issue. Open My Requests to see Open, In Progress, or Resolved status, FuelSearch responses, and unread updates." },
-    { roles: ["admin", "customer"], title: "Troubleshooting", body: "Refresh the page after a deployment. If login fails, verify the email and password and contact a FuelSearch administrator for a temporary-password reset. If an import stops, read the displayed row number and retry the same file safely." },
-  ].filter((topic) => topic.roles.includes(role));
-  const query = search.trim().toLowerCase();
-  const filteredTopics = topics.filter((topic) => !query || `${topic.title} ${topic.body}`.toLowerCase().includes(query));
-  return (
-    <div className={`page-stack help-page ${embedded ? "help-embedded" : ""}`}>
-      {!embedded && <div><h1>Help & User Guide</h1><p>Practical instructions for using the FuelSearch Portal confidently.</p></div>}
-      <label className="help-search"><Search size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search help, for example: import, password, invoice..." /></label>
-      <div className="help-topic-grid">
-        {filteredTopics.map((topic) => <article key={topic.title} className="help-topic"><HelpCircle size={20} /><div><h2>{topic.title}</h2><p>{topic.body}</p></div></article>)}
-      </div>
-      {filteredTopics.length === 0 && <div className="empty-support"><Search size={24} /><strong>No matching help topics</strong><span>Try a shorter search such as “import” or “password”.</span></div>}
-    </div>
   );
 }
 
