@@ -1532,7 +1532,7 @@ function CustomersAdmin({
                 <td><span className="access-summary">{summarizePermissions(customer)}</span></td>
                 <td>
                   <div className="table-actions">
-                    {canPreviewUsers && (
+                    {canPreviewUsers && customer.id !== currentAdmin?.id && (
                       <IconButton
                         label={`Preview as ${customer.displayName}`}
                         onClick={() => {
