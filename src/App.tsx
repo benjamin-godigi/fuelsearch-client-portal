@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -23,6 +23,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquarePlus,
+  MoreVertical,
   Pencil,
   Plus,
   Search,
@@ -275,6 +276,46 @@ function IconButton({ label, onClick, children, danger = false }: { label: strin
     <button className={`icon-button ${danger ? "danger" : ""}`} aria-label={label} title={label} onClick={onClick}>
       {children}
     </button>
+  );
+}
+
+function ActionMenu({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const handlePointer = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+  return (
+    <div className="action-menu" ref={ref}>
+      <button
+        type="button"
+        className="button outline action-menu-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={label}
+        title={label}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <MoreVertical size={16} />
+      </button>
+      {open && (
+        <div className="action-menu-pop" role="menu" onClick={() => setOpen(false)}>
+          {children}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1190,7 +1231,7 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
   };
   return (
     <div className="page-stack">
-      <div className="page-title-row"><h1>Transactions</h1><div className="row-actions"><button className="button outline" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button><button className="button outline" onClick={() => downloadCsv(state.transactions, "fuelsearch-transactions.csv")}><Download size={16} /> Export</button><button className="button outline" onClick={() => setHistoryOpen(true)}><History size={16} /> Import History</button><button className="button outline danger" onClick={() => setResetOpen(true)}><Trash2 size={16} /> Reset</button><button className="button primary" onClick={() => setEditing("new")}><Plus size={16} /> Add Manually</button></div></div>
+      <div className="page-title-row"><h1>Transactions</h1><div className="row-actions"><button className="button outline" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button><button className="button outline" onClick={() => setHistoryOpen(true)}><History size={16} /> Import History</button><button className="button primary" onClick={() => setEditing("new")}><Plus size={16} /> Add Manually</button><ActionMenu label="More actions"><button className="menu-item" onClick={() => downloadCsv(state.transactions, "fuelsearch-transactions.csv")}><Download size={16} /> Export CSV</button><button className="menu-item danger" onClick={() => setResetOpen(true)}><Trash2 size={16} /> Reset Transactions</button></ActionMenu></div></div>
       {operationError && <p className="auth-message auth-error" role="alert">{operationError}</p>}
       {operationSuccess && <p className="auth-message auth-success" role="status">{operationSuccess}</p>}
       <div className="filters"><label><Search size={16} /><input placeholder="Search client..." value={search} onChange={(event) => setSearch(event.target.value)} /></label><select value={status} onChange={(event) => setStatus(event.target.value as TransactionStatus | "All")}><option>All</option>{STATUSES.map((item) => <option key={item}>{item}</option>)}</select><input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><span>→</span><input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></div>
