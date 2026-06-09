@@ -85,6 +85,7 @@ export interface Issue {
   status: IssueStatus;
   reportedBy: string;
   source: string;
+  clientName?: string;
   orderRef?: string;
   resolutionNotes?: string;
   loggedAt: string;
