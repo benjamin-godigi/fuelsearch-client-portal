@@ -4,6 +4,7 @@ import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from
 import {
   AlertCircle,
   ArrowDownUp,
+  ArrowRight,
   Building2,
   CalendarDays,
   CheckCircle2,
@@ -33,7 +34,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Issue, IssuePriority, IssueStatus, PortalUser, Role, Transaction, TransactionStatus } from "./types";
+import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Issue, IssuePriority, IssueStatus, PortalUser, Role, Transaction, TransactionChange, TransactionStatus } from "./types";
 import { AppState, clearLegacyPortalState, defaultState, makeId } from "./services/store";
 import { isSupabaseConfigured } from "./lib/supabase";
 import {
@@ -41,7 +42,7 @@ import {
   signInWithPassword,
   signOutFromSupabase,
 } from "./services/supabaseAuth";
-import { loadPortalData } from "./services/portalData";
+import { fetchTransactionHistory, loadPortalData } from "./services/portalData";
 import {
   completeRequiredPasswordChange,
   createPortalUser,
@@ -53,7 +54,9 @@ import {
   createIssue,
   deleteIssue,
   deleteTransaction,
+  diffTransaction,
   importTransactions,
+  recordTransactionChanges,
   resetTransactions,
   saveTransaction,
   updateIssue,
@@ -1192,9 +1195,16 @@ function TransactionsAdmin({ state, update }: { state: AppState; update: (next: 
     try {
       const id = await saveTransaction(tx);
       const saved = { ...tx, id };
-      const exists = state.transactions.some((item) => item.id === tx.id);
+      const previous = state.transactions.find((item) => item.id === tx.id);
+      const exists = Boolean(previous);
       update({ transactions: exists ? state.transactions.map((item) => item.id === tx.id ? saved : item) : [saved, ...state.transactions] });
       void writeActivityLog(exists ? "Updated transaction" : "Created transaction", `${saved.order} · ${saved.clientName}`).catch(() => undefined);
+      void recordTransactionChanges([{
+        transactionId: id,
+        orderNumber: saved.order,
+        source: exists ? "Manual" : "Created",
+        diff: diffTransaction(previous, saved),
+      }]).catch(() => undefined);
       setEditing(null);
     } catch (error) {
       setOperationError(error instanceof Error ? error.message : "Could not save the transaction.");
@@ -1293,6 +1303,17 @@ function FragmentTx({ tx, expanded, toggle, view, edit, remove }: { tx: Transact
 }
 
 function TransactionDetailsModal({ tx, onClose, onEdit }: { tx: Transaction; onClose: () => void; onEdit: () => void }) {
+  const [history, setHistory] = useState<TransactionChange[] | null>(null);
+  const [historyError, setHistoryError] = useState("");
+  useEffect(() => {
+    let active = true;
+    setHistory(null);
+    setHistoryError("");
+    fetchTransactionHistory(tx.id)
+      .then((changes) => { if (active) setHistory(changes); })
+      .catch((error) => { if (active) { setHistory([]); setHistoryError(error instanceof Error ? error.message : "Could not load the change history."); } });
+    return () => { active = false; };
+  }, [tx.id]);
   const fields = [
     ["Client Name", tx.clientName],
     ["Depot", tx.depot],
@@ -1323,6 +1344,29 @@ function TransactionDetailsModal({ tx, onClose, onEdit }: { tx: Transaction; onC
         {fields.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}
       </div>
       {tx.notes && <div className="transaction-notes"><span>Notes</span><p>{tx.notes}</p></div>}
+      <div className="change-history">
+        <h3><History size={16} /> Change History</h3>
+        {historyError && <p className="auth-message auth-error" role="alert">{historyError}</p>}
+        {history === null && <p className="change-history-empty">Loading history…</p>}
+        {history !== null && history.length === 0 && !historyError && <p className="change-history-empty">No changes recorded yet.</p>}
+        {history !== null && history.length > 0 && (
+          <ul className="change-history-list">
+            {history.map((change) => (
+              <li key={change.id} className="change-entry">
+                <div className="change-entry-head">
+                  <span className={`change-source change-source-${change.source.toLowerCase()}`}>{change.source}</span>
+                  <span className="change-entry-meta">{dateTime(change.changedAt)} · {change.changedByEmail}</span>
+                </div>
+                <ul className="change-deltas">
+                  {change.deltas.map((delta) => (
+                    <li key={delta.field}><span className="change-delta-label">{delta.label}:</span> {delta.from} <ArrowRight size={12} /> <strong>{delta.to}</strong></li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       <div className="modal-actions transaction-view-actions"><button className="button outline" onClick={onClose}>Close</button><button className="button primary" onClick={onEdit}><Pencil size={16} /> Edit Transaction</button></div>
     </Modal>
   );
@@ -1388,10 +1432,31 @@ function ImportDialog({ state, update, onClose, onError, onComplete }: { state: 
     setProcessed(0);
     setImporting(true);
     try {
-      const savedRows = await importTransactions(rows, batch, (completed) => setProcessed(completed));
+      const { rows: savedRows, batchId } = await importTransactions(rows, batch, (completed) => setProcessed(completed));
       void writeActivityLog("Imported transactions", `${rows.length} rows imported from ${filename}`).catch(() => undefined);
       update({ transactions: [...savedRows, ...preserved], importBatches: [batch, ...state.importBatches], activityLogs: [{ id: makeId("activity"), action: "Imported transactions", adminEmail: actorEmail, details: `${rows.length} rows imported from ${filename}`, performedAt: new Date().toISOString() }, ...state.activityLogs] });
-      onComplete(`Import complete: ${rows.length.toLocaleString()} rows processed from ${filename}.`);
+      const oldByOrder = new Map(state.transactions.map((tx) => [tx.order, tx]));
+      let created = 0;
+      let updated = 0;
+      let unchanged = 0;
+      let completedNow = 0;
+      const records = savedRows.map((row) => {
+        const previous = oldByOrder.get(row.order);
+        const diff = diffTransaction(previous, row);
+        if (!previous) {
+          created += 1;
+        } else if (diff.deltas.length > 0) {
+          updated += 1;
+          if (previous.status !== "Completed" && row.status === "Completed") completedNow += 1;
+        } else {
+          unchanged += 1;
+        }
+        const source = previous ? ("Import" as const) : ("Created" as const);
+        return { transactionId: row.id, orderNumber: row.order, source, importBatchId: batchId, diff };
+      });
+      void recordTransactionChanges(records).catch(() => undefined);
+      const completedNote = completedNow > 0 ? ` (${completedNow.toLocaleString()} moved to Completed)` : "";
+      onComplete(`Import complete: ${created.toLocaleString()} new, ${updated.toLocaleString()} updated${completedNote}, ${unchanged.toLocaleString()} unchanged.`);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Could not import the transactions.");
     } finally {
