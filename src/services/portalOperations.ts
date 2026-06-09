@@ -1,4 +1,10 @@
-import type { ImportBatch, Issue, Transaction } from "../types";
+import type {
+  ImportBatch,
+  Issue,
+  Transaction,
+  TransactionChange,
+  TransactionFieldDelta,
+} from "../types";
 import { requireSupabase } from "../lib/supabase";
 
 async function currentUser() {
@@ -194,7 +200,7 @@ export async function importTransactions(
   }
 
   const user = await currentUser();
-  const { error: batchError } = await supabase.from("import_batches").insert({
+  const { data: batchData, error: batchError } = await supabase.from("import_batches").insert({
     imported_by: user.id,
     imported_by_email: user.email ?? "unknown",
     filename: batch.filename,
@@ -203,16 +209,17 @@ export async function importTransactions(
     skipped: batch.skipped,
     dropped_in_parser: batch.droppedInParser,
     order_numbers: batch.orderNumbers,
-  });
+  }).select("id").single();
   if (batchError) throw batchError;
 
   const idsByOrder = new Map(
     (importedRows ?? []).map((row) => [String(row.order_number), String(row.id)]),
   );
-  return transactions.map((transaction) => ({
+  const savedRows = transactions.map((transaction) => ({
     ...transaction,
     id: idsByOrder.get(transaction.order) ?? transaction.id,
   }));
+  return { rows: savedRows, batchId: String(batchData.id) };
 }
 
 export async function resetTransactions() {
@@ -264,8 +271,125 @@ export async function updateIssue(issue: Issue) {
   if (error) throw error;
 }
 
+export async function deleteIssue(issueId: string) {
+  const { error } = await requireSupabase()
+    .from("issues")
+    .delete()
+    .eq("id", issueId);
+  if (error) throw error;
+}
+
 export async function markIssueSeen(issueId: string) {
   const { error } = await requireSupabase().rpc("mark_issue_seen", { issue_id: issueId });
+  if (error) throw error;
+}
+
+// Stored transaction columns worth tracking in the change log, in display order.
+// Derived/display-only fields (profit, costPrice*, totalCostPrice, nightsActual)
+// are intentionally excluded — they are not persisted, so they have no history.
+type TrackedField = {
+  key: keyof Transaction;
+  label: string;
+  format: (value: Transaction[keyof Transaction]) => string;
+};
+
+const moneyText = (value: unknown) =>
+  value == null || value === "" ? "—" : `R ${Number(value).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const litreText = (value: unknown) => (value == null || value === "" ? "—" : `${Number(value).toLocaleString("en-ZA")} L`);
+const numberText = (value: unknown) => (value == null || value === "" ? "—" : String(value));
+const dateText = (value: unknown) => {
+  if (!value) return "—";
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("en-ZA");
+};
+const plainText = (value: unknown) => (value == null || value === "" ? "—" : String(value));
+
+const TRACKED_FIELDS: TrackedField[] = [
+  { key: "status", label: "Status", format: plainText },
+  { key: "requestedFuelL", label: "Requested (L)", format: litreText },
+  { key: "filledFuelL", label: "Filled (L)", format: litreText },
+  { key: "fuelPricePerL", label: "Fuel Price / L", format: moneyText },
+  { key: "totalPrice", label: "Total Price", format: moneyText },
+  { key: "parkingNights", label: "Parking Nights", format: numberText },
+  { key: "parkingFee", label: "Parking Fee", format: moneyText },
+  { key: "depot", label: "Depot", format: plainText },
+  { key: "vehicle", label: "Vehicle", format: plainText },
+  { key: "driver", label: "Driver", format: plainText },
+  { key: "completedAt", label: "Completed At", format: dateText },
+  { key: "expiresAt", label: "Expires At", format: dateText },
+  { key: "notes", label: "Notes", format: plainText },
+];
+
+// True when two stored values are materially equal (handles number vs string,
+// null vs undefined vs "", and ISO-date equivalence).
+function sameValue(left: unknown, right: unknown): boolean {
+  const leftEmpty = left == null || left === "";
+  const rightEmpty = right == null || right === "";
+  if (leftEmpty || rightEmpty) return leftEmpty && rightEmpty;
+  if (typeof left === "number" || typeof right === "number") {
+    const ln = Number(left);
+    const rn = Number(right);
+    if (!Number.isNaN(ln) && !Number.isNaN(rn)) return ln === rn;
+  }
+  return String(left).trim() === String(right).trim();
+}
+
+export interface TransactionDiff {
+  deltas: TransactionFieldDelta[];
+  statusFrom?: string;
+  statusTo?: string;
+}
+
+// Compare a previous transaction against its new state and return only the
+// fields that actually changed. `previous` undefined means a brand-new order.
+export function diffTransaction(previous: Transaction | undefined, next: Transaction): TransactionDiff {
+  const deltas: TransactionFieldDelta[] = [];
+  for (const field of TRACKED_FIELDS) {
+    const before = previous?.[field.key];
+    const after = next[field.key];
+    if (previous && sameValue(before, after)) continue;
+    if (!previous && (after == null || after === "")) continue;
+    deltas.push({
+      field: String(field.key),
+      label: field.label,
+      from: previous ? field.format(before) : "—",
+      to: field.format(after),
+    });
+  }
+  const statusChanged = !previous || !sameValue(previous.status, next.status);
+  return {
+    deltas,
+    statusFrom: previous?.status,
+    statusTo: statusChanged ? next.status : undefined,
+  };
+}
+
+export interface NewTransactionChange {
+  transactionId?: string;
+  orderNumber: string;
+  source: TransactionChange["source"];
+  importBatchId?: string;
+  diff: TransactionDiff;
+}
+
+// Append change-log rows. Best-effort: callers should not let a failure here
+// break the actual import/save. Rows with no deltas are skipped.
+export async function recordTransactionChanges(records: NewTransactionChange[]) {
+  const meaningful = records.filter((record) => record.diff.deltas.length > 0);
+  if (meaningful.length === 0) return;
+  const user = await currentUser();
+  const changedByEmail = user.email ?? "unknown";
+  const rows = meaningful.map((record) => ({
+    transaction_id: record.transactionId && /^\d+$/.test(record.transactionId) ? Number(record.transactionId) : null,
+    order_number: record.orderNumber,
+    source: record.source,
+    import_batch_id: record.importBatchId ?? null,
+    changed_by_email: changedByEmail,
+    status_from: record.diff.statusFrom ?? null,
+    status_to: record.diff.statusTo ?? null,
+    changes: Object.fromEntries(record.diff.deltas.map((delta) => [delta.field, { label: delta.label, from: delta.from, to: delta.to }])),
+  }));
+  const { error } = await requireSupabase().from("transaction_changes").insert(rows);
   if (error) throw error;
 }
 
