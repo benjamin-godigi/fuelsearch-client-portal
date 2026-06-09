@@ -586,13 +586,16 @@ td span { color: var(--muted); font-size: 13px; }
 .guide-grid ul { margin: 12px 0 0; padding-left: 20px; color: #52606d; line-height: 1.8; }
 
 @media (max-width: 900px) {
-  /* Stack the admin shell and let the page flow/scroll instead of clipping to 100vh. */
-  .admin-shell { grid-template-columns: 1fr; height: auto; min-height: 100vh; overflow: visible; }
+  /* Stack the admin shell and let the page flow/scroll instead of clipping to 100vh.
+     align-content:start keeps min-height:100vh (white bg) without stretching the
+     stacked rows — otherwise the sidebar grows to fill the screen and pushes the
+     page content below the fold. */
+  .admin-shell { grid-template-columns: 1fr; height: auto; min-height: 100vh; overflow: visible; align-content: start; }
   .sidebar { position: static; min-height: auto; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
   .admin-content { height: auto; overflow: visible; }
   .table-card { overflow-x: auto; }
   .sidebar nav { grid-template-columns: repeat(2, 1fr); }
-  .sidebar-user { grid-template-columns: 1fr auto; }
+  .sidebar-user { grid-template-columns: 1fr auto; margin-top: 0; }
   .summary-grid, .guide-grid, .help-layout, .invoice-meta { grid-template-columns: 1fr; }
   .support-summary { grid-template-columns: repeat(3, 1fr); }
   .support-filters { grid-template-columns: repeat(2, 1fr); }
