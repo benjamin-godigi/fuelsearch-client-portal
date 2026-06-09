@@ -629,6 +629,10 @@ td span { color: var(--muted); font-size: 13px; }
   .invoice-lines { min-width: 0; font-size: 13px; }
   .customer-requests { padding: 16px; }
   .action-menu-pop { min-width: 190px; }
+  /* Drop the 360px/70vw floor on phones so the client switcher hugs its text
+     like the <h1> heading does, instead of stretching the caret to the edge. */
+  .client-switcher { min-width: 0; max-width: 100%; }
+  .title-cluster { min-width: 0; }
 }
 
 @media print {
