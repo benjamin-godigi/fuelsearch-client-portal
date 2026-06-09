@@ -79,7 +79,8 @@ button { cursor: pointer; }
   animation: auth-spin .8s linear infinite;
 }
 @keyframes auth-spin { to { transform: rotate(360deg); } }
-.client-switcher { min-width: min(360px, 70vw); font-size: 28px; font-weight: 700; color: var(--ink); }
+.title-text { min-width: 0; }
+.client-switcher { min-width: min(360px, 70vw); max-width: 100%; font-size: 28px; font-weight: 700; color: var(--ink); }
 
 .button, .mini-button, .icon-button {
   border: 1px solid var(--line);

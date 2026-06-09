@@ -744,7 +744,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
         <div className="page-title-row">
           <div className="title-cluster">
             <div className="title-icon"><Building2 size={22} /></div>
-            <div>
+            <div className="title-text">
               {availableClients.length > 1 ? (
                 <select className="client-switcher" value={clientName} onChange={(event) => setClientName(event.target.value)}>
                   {availableClients.map((name) => <option key={name}>{name}</option>)}
