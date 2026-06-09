@@ -76,6 +76,28 @@ export interface Transaction {
   notes?: string;
 }
 
+export type TransactionChangeSource = "Created" | "Import" | "Manual";
+
+export interface TransactionFieldDelta {
+  field: string;
+  label: string;
+  from: string;
+  to: string;
+}
+
+export interface TransactionChange {
+  id: string;
+  transactionId?: string;
+  orderNumber: string;
+  source: TransactionChangeSource;
+  changedByEmail: string;
+  changedAt: string;
+  statusFrom?: string;
+  statusTo?: string;
+  deltas: TransactionFieldDelta[];
+  importBatchId?: string;
+}
+
 export interface Issue {
   id: string;
   title: string;

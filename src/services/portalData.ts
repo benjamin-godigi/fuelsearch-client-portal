@@ -10,6 +10,8 @@ import type {
   IssueStatus,
   PortalUser,
   Transaction,
+  TransactionChange,
+  TransactionFieldDelta,
   TransactionStatus,
 } from "../types";
 import { requireSupabase } from "../lib/supabase";
@@ -335,4 +337,50 @@ export async function loadPortalData(
   }));
 
   return { currentUser, customers, clientDirectory, transactions, issues, activityLogs, importBatches };
+}
+
+interface TransactionChangeRow {
+  id: string;
+  transaction_id: number | null;
+  order_number: string;
+  source: TransactionChange["source"];
+  import_batch_id: string | null;
+  changed_by_email: string;
+  changed_at: string;
+  status_from: string | null;
+  status_to: string | null;
+  changes: Record<string, { label?: string; from?: string; to?: string }> | null;
+}
+
+// Lazily load the change history for a single order (admin-only via RLS). Not
+// part of loadPortalData because the log can grow large; fetched on demand when
+// an admin opens a transaction's detail view.
+export async function fetchTransactionHistory(transactionId: string): Promise<TransactionChange[]> {
+  if (!/^\d+$/.test(transactionId)) return [];
+  const { data, error } = await requireSupabase()
+    .from("transaction_changes")
+    .select("id, transaction_id, order_number, source, import_batch_id, changed_by_email, changed_at, status_from, status_to, changes")
+    .eq("transaction_id", Number(transactionId))
+    .order("changed_at", { ascending: false });
+  if (error) throw error;
+  return ((data ?? []) as TransactionChangeRow[]).map((row) => {
+    const deltas: TransactionFieldDelta[] = Object.entries(row.changes ?? {}).map(([field, value]) => ({
+      field,
+      label: value?.label ?? field,
+      from: value?.from ?? "—",
+      to: value?.to ?? "—",
+    }));
+    return {
+      id: row.id,
+      transactionId: row.transaction_id == null ? undefined : String(row.transaction_id),
+      orderNumber: row.order_number,
+      source: row.source,
+      changedByEmail: row.changed_by_email,
+      changedAt: row.changed_at,
+      statusFrom: row.status_from ?? undefined,
+      statusTo: row.status_to ?? undefined,
+      deltas,
+      importBatchId: row.import_batch_id ?? undefined,
+    };
+  });
 }
