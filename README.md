@@ -29,10 +29,16 @@ The production output is written to `dist/`.
 
 ## Deployment
 
-The intended deployment flow is:
+The portal runs on Vercel with two isolated Supabase databases so features can
+be tested before they reach customers:
 
 ```text
-Local workspace -> GitHub main branch -> Vercel production
+feature branch -> merge to staging -> staging site (staging DB) -> verify
+                                                                     |
+                                       merge staging to main -> production (prod DB)
 ```
 
-See `DEPLOYMENT.md` for the Vercel and Supabase environment setup.
+The permanent `staging` branch is "the staging site" and always has the same
+URL; `main` is production. Local dev and the staging branch use the staging
+database; only `main` uses production. See `DEPLOYMENT.md` for the full Vercel
+and Supabase environment setup.
