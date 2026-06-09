@@ -568,8 +568,9 @@ td span { color: var(--muted); font-size: 13px; }
 .banking div strong { display: block; margin-bottom: 8px; font-size: 12px; }
 .banking span { display: block; color: var(--muted); font-weight: 400; font-size: 12px; line-height: 1.65; }
 
-.import-drop { margin: 20px; padding: 34px; border: 2px dashed #b9c6d3; border-radius: 8px; text-align: center; background: #f8fafc; display: grid; gap: 8px; place-items: center; }
-.import-drop p { color: var(--muted); }
+.import-drop { margin: 20px; padding: 34px 24px; border: 2px dashed #b9c6d3; border-radius: 8px; text-align: center; background: #f8fafc; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.import-drop strong, .import-drop p { max-width: 100%; }
+.import-drop p { margin: 0; color: var(--muted); }
 .import-drop input { max-width: 100%; }
 .success-note { display: flex; gap: 8px; align-items: center; color: var(--green); padding: 0 20px 20px; font-weight: 700; }
 .import-progress { margin: 0 24px 18px; padding: 16px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; }
