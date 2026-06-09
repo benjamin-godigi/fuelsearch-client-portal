@@ -274,6 +274,8 @@ export async function loadPortalData(
     email: client.contact_email ?? undefined,
     phone: client.phone ?? undefined,
     address: joinAddress(client) || undefined,
+    vatNumber: client.vat_number ?? undefined,
+    registration: client.registration_number ?? undefined,
     createdAt: client.created_at,
   }));
 

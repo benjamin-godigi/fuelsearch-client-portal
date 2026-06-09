@@ -1737,6 +1737,8 @@ function CustomerForm({ customer, clientDirectory, allowSuperAdmin, onClose, onS
       clientName,
       displayName: client?.contactPerson ?? current.displayName,
       address: client?.address ?? current.address,
+      vatNumber: client?.vatNumber ?? current.vatNumber,
+      registration: client?.registration ?? current.registration,
       clientId: client?.id,
     }));
   };

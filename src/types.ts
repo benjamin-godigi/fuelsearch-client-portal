@@ -45,6 +45,8 @@ export interface ClientDirectoryEntry {
   lowBalanceThreshold?: number;
   overageThreshold?: number;
   address?: string;
+  vatNumber?: string;
+  registration?: string;
   createdAt?: string;
 }
 
