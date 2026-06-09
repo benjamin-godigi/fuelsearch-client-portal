@@ -80,6 +80,8 @@ interface IssueRow {
   updated_at: string;
   customer_update_at: string | null;
   customer_seen_at: string | null;
+  client_id: number | null;
+  clients: Array<{ name: string }> | { name: string } | null;
 }
 
 interface ActivityLogRow {
@@ -198,10 +200,26 @@ export async function loadPortalData(
     }
   }
 
+  // Safety net against an unavailable or stale count (count came back null, or rows
+  // were inserted between the count and the page fetches): page sequentially from
+  // where the concurrent fetch ended until a short page confirms the real end. The
+  // equality only holds when every counted page came back full (a no-count run has
+  // pageCount 0 and an empty array, which also matches), so the common case where
+  // the last page was partial adds no extra request.
+  if (transactionData.length === pageCount * pageSize) {
+    for (let page = pageCount; ; page += 1) {
+      const { data, error: transactionError } = await fetchPage(page);
+      if (transactionError) throw transactionError;
+      const rows = (data ?? []) as TransactionRow[];
+      transactionData.push(...rows);
+      if (rows.length < pageSize) break;
+    }
+  }
+
   const [{ data: issueData, error: issueError }, { data: activityData, error: activityError }, { data: importData, error: importError }] = await Promise.all([
     supabase
       .from("issues")
-      .select("id, title, description, category, priority, status, reported_by, source, order_reference, resolution_notes, created_at, updated_at, customer_update_at, customer_seen_at")
+      .select("id, title, description, category, priority, status, reported_by, source, order_reference, resolution_notes, created_at, updated_at, customer_update_at, customer_seen_at, client_id, clients(name)")
       .order("updated_at", { ascending: false }),
     supabase
       .from("activity_logs")
@@ -287,6 +305,7 @@ export async function loadPortalData(
     status: issue.status,
     reportedBy: issue.reported_by,
     source: issue.source,
+    clientName: String(relationValue(issue.clients, "name") ?? "") || undefined,
     orderRef: issue.order_reference ?? undefined,
     resolutionNotes: issue.resolution_notes ?? undefined,
     loggedAt: issue.created_at,

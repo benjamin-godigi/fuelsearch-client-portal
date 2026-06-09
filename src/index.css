@@ -79,7 +79,8 @@ button { cursor: pointer; }
   animation: auth-spin .8s linear infinite;
 }
 @keyframes auth-spin { to { transform: rotate(360deg); } }
-.client-switcher { min-width: min(360px, 70vw); font-size: 28px; font-weight: 700; color: var(--ink); }
+.title-text { min-width: 0; }
+.client-switcher { min-width: min(360px, 70vw); max-width: 100%; font-size: 28px; font-weight: 700; color: var(--ink); }
 
 .button, .mini-button, .icon-button {
   border: 1px solid var(--line);
@@ -115,6 +116,42 @@ button { cursor: pointer; }
 .icon-button { width: 34px; height: 34px; min-height: 34px; padding: 0; color: var(--navy); }
 .icon-button.danger { color: #d22; }
 .mini-button { min-height: 30px; padding: 0 10px; font-size: 13px; }
+.action-menu { position: relative; display: inline-flex; }
+.action-menu-trigger { width: 38px; padding: 0; }
+.action-menu-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 210px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 14px 36px rgb(16 24 40 / .18);
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover { background: #f3f6f9; }
+.menu-item.danger { color: var(--red); }
+.menu-item.danger:hover { background: rgb(201 51 43 / .08); }
 
 .statement-top {
   height: 86px;
@@ -389,7 +426,7 @@ td span { color: var(--muted); font-size: 13px; }
 .support-summary .summary-card strong { font-size: 25px; }
 .support-filters { display: grid; grid-template-columns: minmax(280px, 1.4fr) repeat(3, minmax(150px, .7fr)); gap: 12px; align-items: end; }
 .filter-field { display: grid; gap: 6px; font-size: 12px; font-weight: 700; color: #475467; }
-.filter-field select { width: 100%; }
+.filter-field select, .filter-field input { width: 100%; }
 .filter-search > label { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 4px; padding: 0 10px; min-height: 38px; color: var(--muted); }
 .filter-search input { flex: 1; min-width: 0; border: 0; padding: 0; outline: 0; }
 .support-description { display: block; max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -427,7 +464,7 @@ td span { color: var(--muted); font-size: 13px; }
 .info-box p { color: #52606d; line-height: 1.55; }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .58); z-index: 50; display: grid; place-items: center; padding: 24px; }
-.modal { width: min(620px, 100%); max-height: 92vh; overflow: auto; background: #fff; border-radius: 8px; box-shadow: 0 22px 72px rgb(0 0 0 / .32); }
+.modal { width: min(620px, 100%); min-width: 0; max-height: 92vh; overflow: auto; background: #fff; border-radius: 8px; box-shadow: 0 22px 72px rgb(0 0 0 / .32); }
 .modal-wide { width: min(940px, 100%); }
 .modal-head { height: 58px; padding: 0 18px 0 22px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .modal-head h2 { font-size: 17px; }
@@ -436,7 +473,7 @@ td span { color: var(--muted); font-size: 13px; }
 .form-grid { grid-template-columns: repeat(2, 1fr); }
 .form-grid .full, .modal-actions.full { grid-column: 1 / -1; }
 .form-stack label, .form-grid label { display: grid; gap: 6px; font-weight: 700; font-size: 13px; }
-.form-stack input, .form-stack select, .form-grid input, .form-grid select { width: 100%; }
+.form-stack input, .form-stack select, .form-stack textarea, .form-grid input, .form-grid select, .form-grid textarea { width: 100%; min-width: 0; }
 .modal-actions { justify-content: flex-end; padding-top: 4px; }
 .customer-form { padding: 18px 24px 22px; display: grid; gap: 15px; }
 .customer-form .form-intro { color: var(--muted); margin-top: -8px; }
@@ -446,7 +483,7 @@ td span { color: var(--muted); font-size: 13px; }
 .company-fields label > span { color: var(--muted); font-weight: 400; font-size: 12px; }
 .customer-form input,
 .customer-form textarea,
-.customer-form select { width: 100%; }
+.customer-form select { width: 100%; min-width: 0; }
 .admin-toggle { display: flex !important; grid-template-columns: auto auto 1fr; align-items: center; gap: 11px !important; cursor: pointer; padding: 3px 0 14px; border-bottom: 1px solid var(--line); }
 .admin-toggle > input { position: absolute; opacity: 0; pointer-events: none; width: 1px; }
 .toggle-track { width: 38px; height: 22px; border-radius: 999px; background: #e4e7ec; padding: 3px; transition: background .15s ease; }
@@ -496,7 +533,7 @@ td span { color: var(--muted); font-size: 13px; }
 .company-fields-title span { color: var(--muted); font-size: 12px; }
 .company-fields-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
-.invoice-toolbar { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); background: #f8fafc; }
+.invoice-toolbar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); background: #f8fafc; }
 .invoice-paper { margin: 22px auto; width: min(720px, calc(100% - 32px)); background: #fff; border: 1px solid var(--line); padding: 34px; color: #1f2937; }
 .invoice-head { display: flex; justify-content: space-between; border-bottom: 3px solid var(--navy); padding-bottom: 22px; }
 .invoice-head img { width: 180px; margin-bottom: 10px; }
@@ -518,6 +555,7 @@ td span { color: var(--muted); font-size: 13px; }
 
 .import-drop { margin: 20px; padding: 34px; border: 2px dashed #b9c6d3; border-radius: 8px; text-align: center; background: #f8fafc; display: grid; gap: 8px; place-items: center; }
 .import-drop p { color: var(--muted); }
+.import-drop input { max-width: 100%; }
 .success-note { display: flex; gap: 8px; align-items: center; color: var(--green); padding: 0 20px 20px; font-weight: 700; }
 .import-progress { margin: 0 24px 18px; padding: 16px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; }
 .import-progress-copy { display: flex; justify-content: space-between; gap: 16px; color: var(--navy); }
@@ -549,13 +587,16 @@ td span { color: var(--muted); font-size: 13px; }
 .guide-grid ul { margin: 12px 0 0; padding-left: 20px; color: #52606d; line-height: 1.8; }
 
 @media (max-width: 900px) {
-  /* Stack the admin shell and let the page flow/scroll instead of clipping to 100vh. */
-  .admin-shell { grid-template-columns: 1fr; height: auto; min-height: 100vh; overflow: visible; }
+  /* Stack the admin shell and let the page flow/scroll instead of clipping to 100vh.
+     align-content:start keeps min-height:100vh (white bg) without stretching the
+     stacked rows — otherwise the sidebar grows to fill the screen and pushes the
+     page content below the fold. */
+  .admin-shell { grid-template-columns: 1fr; height: auto; min-height: 100vh; overflow: visible; align-content: start; }
   .sidebar { position: static; min-height: auto; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
   .admin-content { height: auto; overflow: visible; }
   .table-card { overflow-x: auto; }
   .sidebar nav { grid-template-columns: repeat(2, 1fr); }
-  .sidebar-user { grid-template-columns: 1fr auto; }
+  .sidebar-user { grid-template-columns: 1fr auto; margin-top: 0; }
   .summary-grid, .guide-grid, .help-layout, .invoice-meta { grid-template-columns: 1fr; }
   .support-summary { grid-template-columns: repeat(3, 1fr); }
   .support-filters { grid-template-columns: repeat(2, 1fr); }
@@ -571,7 +612,7 @@ td span { color: var(--muted); font-size: 13px; }
 @media (max-width: 760px) {
   .statement-top { height: auto; padding: 18px; gap: 18px; flex-direction: column; align-items: flex-start; }
   .table-card { overflow-x: auto; }
-  table { min-width: 900px; }
+  .table-card table { min-width: 900px; }
   .form-grid { grid-template-columns: 1fr; }
   .login-panel { padding: 28px; }
   .banking { grid-template-columns: 1fr; }
@@ -579,6 +620,20 @@ td span { color: var(--muted); font-size: 13px; }
   .support-filters { grid-template-columns: 1fr; }
   .preview-banner { align-items: flex-start; flex-direction: column; padding: 12px 18px; }
   .preview-banner .button { margin-left: 0; }
+  .modal-backdrop { padding: 12px; }
+  .modal-head { height: auto; min-height: 54px; padding: 12px 14px 12px 18px; }
+  .invoice-toolbar { padding: 12px; justify-content: stretch; }
+  .invoice-toolbar .button { flex: 1; }
+  .invoice-paper { padding: 20px; margin: 16px auto; }
+  .invoice-head { flex-direction: column; gap: 14px; }
+  .invoice-word { text-align: left; font-size: 34px; }
+  .invoice-lines { min-width: 0; font-size: 13px; }
+  .customer-requests { padding: 16px; }
+  .action-menu-pop { min-width: 190px; }
+  /* Drop the 360px/70vw floor on phones so the client switcher hugs its text
+     like the <h1> heading does, instead of stretching the caret to the edge. */
+  .client-switcher { min-width: 0; max-width: 100%; }
+  .title-cluster { min-width: 0; }
 }
 
 @media print {

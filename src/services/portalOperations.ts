@@ -47,6 +47,19 @@ async function clientIdsForNames(clientNames: string[]) {
   return idsByName;
 }
 
+async function lookupClientId(clientName: string) {
+  const name = clientName.trim();
+  if (!name) return null;
+
+  const { data, error } = await requireSupabase()
+    .from("clients")
+    .select("id")
+    .ilike("name", name)
+    .maybeSingle();
+  if (error) throw error;
+  return (data?.id as number | undefined) ?? null;
+}
+
 async function depotIdForName(depotName: string) {
   const name = depotName.trim();
   if (!name || name === "Unassigned depot") return null;
@@ -212,10 +225,17 @@ export async function resetTransactions() {
 
 export async function createIssue(issue: Issue) {
   const user = await currentUser();
+  // The set_issue_client DB trigger has the final say on client_id: for a
+  // reporter who belongs to a client account it overrides this value with their
+  // own account. This supplied value only takes effect for support staff logging
+  // a request on behalf of the client they are previewing (see
+  // 20260609130000_issue_client_admin_fallback.sql).
+  const clientId = issue.clientName ? await lookupClientId(issue.clientName) : null;
   const { data, error } = await requireSupabase()
     .from("issues")
     .insert({
       reporter_user_id: user.id,
+      client_id: clientId,
       title: issue.title,
       description: issue.description,
       category: issue.category,
