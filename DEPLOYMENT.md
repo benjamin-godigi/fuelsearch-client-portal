@@ -32,24 +32,37 @@ visits to React Router paths.
 
 Two isolated environments keep testing away from live customer data:
 
-| Environment | Frontend (Vercel)          | Database (Supabase)              | Used for                        |
-| ----------- | -------------------------- | -------------------------------- | ------------------------------- |
-| Production  | `main` branch → Production | `efjnltsombshrimuohtb` (prod)    | Live customers                  |
-| Staging     | Every PR → Preview deploy  | `aykgexwofckejdozejoo` (staging) | Testing features before go-live |
-| Local       | `npm run dev`              | `aykgexwofckejdozejoo` (staging) | Day-to-day development          |
+| Environment | Branch (Vercel)               | Database (Supabase)              | Used for                        |
+| ----------- | ----------------------------- | -------------------------------- | ------------------------------- |
+| Production  | `main` → Production           | `efjnltsombshrimuohtb` (prod)    | Live customers                  |
+| Staging     | `staging` → fixed staging URL | `aykgexwofckejdozejoo` (staging) | Testing features before go-live |
+| Local       | `npm run dev`                 | `aykgexwofckejdozejoo` (staging) | Day-to-day development          |
 
-Local dev and Preview deploys both point at the **staging** database, so work in
-progress can never touch production records. Only `main` (Production) uses the
-production database.
+`main` is the Vercel **Production Branch**; every other branch (including
+`staging`) deploys as a Preview, so it uses the **staging** database. Local dev
+also targets staging. Result: only `main` ever touches the production database.
+
+The `staging` branch is permanent and always has the same URL — that is "the
+staging site". Promote by merging `staging` into `main`.
 
 Release flow:
 
 ```text
-feature branch ──open PR──► Vercel Preview URL (staging DB)   ← test, share for review
-                                   │  approve + merge
-                                   ▼
-                              main ──► Vercel Production (prod DB)   ← live
+feature branch ──merge──► staging ──► fixed staging URL (staging DB)   ← test until happy
+                                          │  merge staging → main
+                                          ▼
+                                        main ──► Production URL (prod DB)   ← live
 ```
+
+1. Branch off `staging` for each change.
+2. Merge the change into `staging`; Vercel redeploys the staging site (staging DB).
+   If the change has a new DB migration, apply it to the **staging** database now.
+3. Test on the staging URL until you are happy.
+4. Open a PR from `staging` to `main` and merge it; Vercel deploys to production.
+   Apply any new migration to the **production** database as part of this step.
+
+Keep `staging` and `main` from drifting: after a release, the only difference
+between them should be changes still under test.
 
 ## Vercel Environment Variables
 

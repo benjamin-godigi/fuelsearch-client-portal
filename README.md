@@ -33,11 +33,12 @@ The portal runs on Vercel with two isolated Supabase databases so features can
 be tested before they reach customers:
 
 ```text
-feature branch -> PR -> Vercel Preview (staging DB)  -> verify
-                                                         |
-                                          merge to main -> Vercel Production (prod DB)
+feature branch -> merge to staging -> staging site (staging DB) -> verify
+                                                                     |
+                                       merge staging to main -> production (prod DB)
 ```
 
-Local dev and Preview deploys use the staging database; only `main` uses
-production. See `DEPLOYMENT.md` for the full Vercel and Supabase environment
-setup.
+The permanent `staging` branch is "the staging site" and always has the same
+URL; `main` is production. Local dev and the staging branch use the staging
+database; only `main` uses production. See `DEPLOYMENT.md` for the full Vercel
+and Supabase environment setup.
