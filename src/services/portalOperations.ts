@@ -264,6 +264,14 @@ export async function updateIssue(issue: Issue) {
   if (error) throw error;
 }
 
+export async function deleteIssue(issueId: string) {
+  const { error } = await requireSupabase()
+    .from("issues")
+    .delete()
+    .eq("id", issueId);
+  if (error) throw error;
+}
+
 export async function markIssueSeen(issueId: string) {
   const { error } = await requireSupabase().rpc("mark_issue_seen", { issue_id: issueId });
   if (error) throw error;

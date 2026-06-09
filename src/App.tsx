@@ -51,6 +51,7 @@ import {
 } from "./services/portalUsers";
 import {
   createIssue,
+  deleteIssue,
   deleteTransaction,
   importTransactions,
   resetTransactions,
@@ -1766,6 +1767,18 @@ function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partia
       setOperationError(error instanceof Error ? error.message : "Could not update the support request.");
     }
   };
+  const removeIssue = async (issue: Issue) => {
+    if (!window.confirm(`Delete the request "${issue.title}"? This cannot be undone.`)) return;
+    setOperationError("");
+    try {
+      await deleteIssue(issue.id);
+      void writeActivityLog("Deleted support request", `${issue.title} · ${issue.reportedBy}`).catch(() => undefined);
+      update({ issues: state.issues.filter((item) => item.id !== issue.id) });
+      if (selected?.id === issue.id) setSelected(null);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Could not delete the support request.");
+    }
+  };
 
   useEffect(() => {
     if (location.pathname === "/admin/issues" && state.issues.some((issue) => isAfter(issue.loggedAt, state.supportNotificationsSeenAt))) {
@@ -1825,7 +1838,12 @@ function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partia
                 <td>{issue.reportedBy}<br /><span>{issue.source}</span></td>
                 <td className="mono">{issue.orderRef ?? "-"}</td>
                 <td>{dateTime(issue.updatedAt)}</td>
-                <td><IconButton label="Review request" onClick={() => setSelected(issue)}><Eye size={16} /></IconButton></td>
+                <td>
+                  <div className="table-actions">
+                    <IconButton label="Review request" onClick={() => setSelected(issue)}><Eye size={16} /></IconButton>
+                    <IconButton label="Delete request" danger onClick={() => void removeIssue(issue)}><Trash2 size={16} /></IconButton>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
