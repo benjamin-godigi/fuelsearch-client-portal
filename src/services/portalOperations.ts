@@ -225,6 +225,11 @@ export async function resetTransactions() {
 
 export async function createIssue(issue: Issue) {
   const user = await currentUser();
+  // The set_issue_client DB trigger has the final say on client_id: for a
+  // reporter who belongs to a client account it overrides this value with their
+  // own account. This supplied value only takes effect for support staff logging
+  // a request on behalf of the client they are previewing (see
+  // 20260609130000_issue_client_admin_fallback.sql).
   const clientId = issue.clientName ? await lookupClientId(issue.clientName) : null;
   const { data, error } = await requireSupabase()
     .from("issues")
