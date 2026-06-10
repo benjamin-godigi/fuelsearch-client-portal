@@ -37,15 +37,7 @@ export interface ClientDirectoryEntry {
   clientName: string;
   contactPerson?: string;
   email?: string;
-  phone?: string;
-  contactPersonPhone?: string;
-  contactPersonEmail?: string;
-  pricingTier?: string;
-  balance?: number;
-  lowBalanceThreshold?: number;
-  overageThreshold?: number;
   address?: string;
-  createdAt?: string;
 }
 
 export interface Transaction {
@@ -72,11 +64,10 @@ export interface Transaction {
   createdAt: string;
   completedAt?: string;
   expiresAt?: string;
-  manualOverride?: boolean;
   notes?: string;
 }
 
-export type TransactionChangeSource = "Created" | "Import" | "Manual";
+type TransactionChangeSource = "Created" | "Import" | "Manual";
 
 export interface TransactionFieldDelta {
   field: string;
@@ -87,15 +78,10 @@ export interface TransactionFieldDelta {
 
 export interface TransactionChange {
   id: string;
-  transactionId?: string;
-  orderNumber: string;
   source: TransactionChangeSource;
   changedByEmail: string;
   changedAt: string;
-  statusFrom?: string;
-  statusTo?: string;
   deltas: TransactionFieldDelta[];
-  importBatchId?: string;
 }
 
 export interface Issue {
@@ -131,7 +117,4 @@ export interface ImportBatch {
   importedBy: string;
   rowsInFile: number;
   imported: number;
-  skipped: number;
-  droppedInParser: number;
-  orderNumbers: string[];
 }

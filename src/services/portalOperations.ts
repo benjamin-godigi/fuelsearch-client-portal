@@ -13,8 +13,8 @@ async function currentUser() {
   return data.user;
 }
 
-function normalizedClientName(clientName: string) {
-  return clientName.trim().toLowerCase();
+function normalizedName(name: string) {
+  return name.trim().toLowerCase();
 }
 
 async function clientIdsForNames(clientNames: string[]) {
@@ -25,14 +25,14 @@ async function clientIdsForNames(clientNames: string[]) {
   if (error) throw error;
 
   const idsByName = new Map(
-    (data ?? []).map((client) => [normalizedClientName(String(client.name)), client.id as number]),
+    (data ?? []).map((client) => [normalizedName(String(client.name)), client.id as number]),
   );
   const missingClients = [...new Map(
     clientNames
       .map((name) => name.trim())
       .filter(Boolean)
-      .filter((name) => !idsByName.has(normalizedClientName(name)))
-      .map((name) => [normalizedClientName(name), name]),
+      .filter((name) => !idsByName.has(normalizedName(name)))
+      .map((name) => [normalizedName(name), name]),
   ).values()];
 
   if (missingClients.length > 0) {
@@ -46,7 +46,7 @@ async function clientIdsForNames(clientNames: string[]) {
       .select("id, name");
     if (insertError) throw insertError;
     for (const client of created ?? []) {
-      idsByName.set(normalizedClientName(String(client.name)), client.id as number);
+      idsByName.set(normalizedName(String(client.name)), client.id as number);
     }
   }
 
@@ -88,24 +88,20 @@ async function depotIdForName(depotName: string) {
   return created.id as number;
 }
 
-function normalizedDepotName(depotName: string) {
-  return depotName.trim().toLowerCase();
-}
-
 async function depotIdsForNames(depotNames: string[]) {
   const supabase = requireSupabase();
   const { data, error } = await supabase.from("depots").select("id, name");
   if (error) throw error;
 
   const idsByName = new Map(
-    (data ?? []).map((depot) => [normalizedDepotName(String(depot.name)), depot.id as number]),
+    (data ?? []).map((depot) => [normalizedName(String(depot.name)), depot.id as number]),
   );
   const missingDepots = [...new Map(
     depotNames
       .map((name) => name.trim())
       .filter((name) => name && name !== "Unassigned depot")
-      .filter((name) => !idsByName.has(normalizedDepotName(name)))
-      .map((name) => [normalizedDepotName(name), name]),
+      .filter((name) => !idsByName.has(normalizedName(name)))
+      .map((name) => [normalizedName(name), name]),
   ).values()];
 
   if (missingDepots.length > 0) {
@@ -115,7 +111,7 @@ async function depotIdsForNames(depotNames: string[]) {
       .select("id, name");
     if (insertError) throw insertError;
     for (const depot of created ?? []) {
-      idsByName.set(normalizedDepotName(String(depot.name)), depot.id as number);
+      idsByName.set(normalizedName(String(depot.name)), depot.id as number);
     }
   }
 
@@ -124,7 +120,7 @@ async function depotIdsForNames(depotNames: string[]) {
 
 async function transactionRow(transaction: Transaction, clientId?: number, depotId?: number | null) {
   const resolvedClientId = clientId ?? (await clientIdsForNames([transaction.clientName]))
-    .get(normalizedClientName(transaction.clientName));
+    .get(normalizedName(transaction.clientName));
   if (!resolvedClientId) throw new Error(`Could not create or find client "${transaction.clientName}".`);
 
   return {
@@ -177,8 +173,8 @@ export async function importTransactions(
   const clientIds = await clientIdsForNames(transactions.map((transaction) => transaction.clientName));
   const depotIds = await depotIdsForNames(transactions.map((transaction) => transaction.depot));
   const rows = await Promise.all(transactions.map((transaction) => {
-    const clientId = clientIds.get(normalizedClientName(transaction.clientName));
-    const depotId = depotIds.get(normalizedDepotName(transaction.depot)) ?? null;
+    const clientId = clientIds.get(normalizedName(transaction.clientName));
+    const depotId = depotIds.get(normalizedName(transaction.depot)) ?? null;
     return transactionRow(transaction, clientId, depotId);
   }));
 
@@ -206,9 +202,9 @@ export async function importTransactions(
     filename: batch.filename,
     rows_in_file: batch.rowsInFile,
     imported: batch.imported,
-    skipped: batch.skipped,
-    dropped_in_parser: batch.droppedInParser,
-    order_numbers: batch.orderNumbers,
+    skipped: 0,
+    dropped_in_parser: 0,
+    order_numbers: transactions.map((transaction) => transaction.order),
   }).select("id").single();
   if (batchError) throw batchError;
 

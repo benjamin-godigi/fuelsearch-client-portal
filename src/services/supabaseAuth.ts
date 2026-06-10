@@ -1,12 +1,6 @@
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { requireSupabase } from "../lib/supabase";
 
-export async function getSupabaseSession() {
-  const { data, error } = await requireSupabase().auth.getSession();
-  if (error) throw error;
-  return data.session;
-}
-
 export async function signInWithPassword(email: string, password: string) {
   const { error } = await requireSupabase().auth.signInWithPassword({
     email,
