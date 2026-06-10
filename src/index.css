@@ -49,7 +49,7 @@ button { cursor: pointer; }
 .eyebrow { color: var(--red); font-weight: 700; text-transform: uppercase; font-size: 12px; letter-spacing: 0; }
 .login-panel h1 { font-size: clamp(32px, 5vw, 54px); line-height: 0.98; margin: 0 0 18px; color: var(--navy); }
 .login-copy { color: var(--muted); line-height: 1.6; margin-bottom: 28px; }
-.login-actions, .row-actions, .top-actions, .modal-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.row-actions, .top-actions, .modal-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .auth-form { display: grid; gap: 10px; }
 .auth-form label { color: var(--navy); font-size: 14px; font-weight: 700; }
 .auth-form input { min-height: 44px; }
@@ -475,7 +475,6 @@ td span { color: var(--muted); font-size: 13px; }
 .request-response { padding: 12px; border-radius: 6px; background: #eff8ff; }
 .request-response p { margin-top: 5px; color: #344054; white-space: pre-wrap; }
 .info-box { padding: 16px 18px; display: flex; gap: 12px; align-items: flex-start; background: #f8fafc; }
-.info-box.blue { background: #eaf6ff; border-color: #9bd8ff; margin-top: 20px; }
 .info-box p { color: #52606d; line-height: 1.55; }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .58); z-index: 50; display: grid; place-items: center; padding: 24px; }
@@ -499,13 +498,6 @@ td span { color: var(--muted); font-size: 13px; }
 .customer-form input,
 .customer-form textarea,
 .customer-form select { width: 100%; min-width: 0; }
-.admin-toggle { display: flex !important; grid-template-columns: auto auto 1fr; align-items: center; gap: 11px !important; cursor: pointer; padding: 3px 0 14px; border-bottom: 1px solid var(--line); }
-.admin-toggle > input { position: absolute; opacity: 0; pointer-events: none; width: 1px; }
-.toggle-track { width: 38px; height: 22px; border-radius: 999px; background: #e4e7ec; padding: 3px; transition: background .15s ease; }
-.toggle-track span { display: block; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgb(16 24 40 / .22); transition: transform .15s ease; }
-.admin-toggle input:checked + .toggle-track { background: var(--navy); }
-.admin-toggle input:checked + .toggle-track span { transform: translateX(16px); }
-.admin-toggle input:focus-visible + .toggle-track { outline: 2px solid #84caff; outline-offset: 2px; }
 .role-help { color: var(--muted); font-size: 13px; margin-top: -6px; }
 .access-summary { color: var(--ink); font-size: 13px; font-weight: 500; }
 .permissions-panel {
@@ -572,7 +564,6 @@ td span { color: var(--muted); font-size: 13px; }
 .import-drop strong, .import-drop p { max-width: 100%; }
 .import-drop p { margin: 0; color: var(--muted); }
 .import-drop input { max-width: 100%; }
-.success-note { display: flex; gap: 8px; align-items: center; color: var(--green); padding: 0 20px 20px; font-weight: 700; }
 .import-progress { margin: 0 24px 18px; padding: 16px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; }
 .import-progress-copy { display: flex; justify-content: space-between; gap: 16px; color: var(--navy); }
 .import-progress-track { height: 10px; margin: 10px 0 8px; overflow: hidden; border-radius: 999px; background: #dbe7f3; }
@@ -581,26 +572,6 @@ td span { color: var(--muted); font-size: 13px; }
 .danger-confirmation { display: grid; gap: 14px; padding: 24px; }
 .danger-confirmation > svg, .danger-confirmation h2 { color: var(--red); }
 .danger-confirmation label { display: grid; gap: 8px; margin-top: 6px; }
-
-.help-layout { display: grid; grid-template-columns: 240px 1fr; gap: 20px; }
-.help-layout aside { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: grid; gap: 4px; align-content: start; }
-.help-layout aside a { color: var(--ink); text-decoration: none; padding: 10px 12px; border-radius: 4px; font-weight: 600; }
-.help-layout aside a.active { background: var(--navy); color: #fff; }
-.help-layout article { border: 1px solid var(--line); border-radius: 8px; padding: 26px; }
-.help-layout article > p { color: var(--muted); line-height: 1.6; margin: 10px 0 18px; }
-.help-page > div:first-child > p { margin-top: 6px; color: var(--muted); }
-.help-search { min-height: 48px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); }
-.help-search input { flex: 1; min-width: 0; border: 0; outline: 0; padding: 0; }
-.help-topic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.help-topic { display: grid; grid-template-columns: auto 1fr; gap: 13px; align-items: start; padding: 18px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
-.help-topic > svg { color: var(--red); margin-top: 2px; }
-.help-topic h2 { font-size: 17px; color: var(--navy); }
-.help-topic p { margin-top: 7px; color: var(--muted); line-height: 1.62; }
-.help-embedded { padding: 20px; }
-.guide-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.guide-grid > div { border: 1px solid var(--line); border-left: 4px solid var(--navy); border-radius: 8px; padding: 18px; }
-.guide-grid > div:last-child { border-left-color: var(--red); }
-.guide-grid ul { margin: 12px 0 0; padding-left: 20px; color: #52606d; line-height: 1.8; }
 
 @media (max-width: 900px) {
   /* Stack the admin shell and let the page flow/scroll instead of clipping to 100vh.
@@ -613,13 +584,12 @@ td span { color: var(--muted); font-size: 13px; }
   .table-card { overflow-x: auto; }
   .sidebar nav { grid-template-columns: repeat(2, 1fr); }
   .sidebar-user { grid-template-columns: 1fr auto; margin-top: 0; }
-  .summary-grid, .guide-grid, .help-layout, .invoice-meta { grid-template-columns: 1fr; }
+  .summary-grid, .invoice-meta { grid-template-columns: 1fr; }
   .support-summary { grid-template-columns: repeat(3, 1fr); }
   .support-filters { grid-template-columns: repeat(2, 1fr); }
   .detail-row .transaction-detail-grid { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
   .transaction-view-grid { grid-template-columns: repeat(2, 1fr); }
   .support-request-body { grid-template-columns: 1fr; }
-  .help-topic-grid { grid-template-columns: 1fr; }
   .customer-request-head, .customer-request footer { align-items: stretch; flex-direction: column; }
   .credential-card { padding: 18px; }
   .push-right { margin-left: 0; }

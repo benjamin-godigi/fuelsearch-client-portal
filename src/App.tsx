@@ -6,7 +6,6 @@ import {
   ArrowDownUp,
   ArrowRight,
   Building2,
-  CalendarDays,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -35,7 +34,7 @@ import {
   X,
 } from "lucide-react";
 import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Issue, IssuePriority, IssueStatus, PortalUser, Role, Transaction, TransactionChange, TransactionStatus } from "./types";
-import { AppState, clearLegacyPortalState, defaultState, makeId } from "./services/store";
+import { AppState, defaultState, makeId } from "./services/store";
 import { isSupabaseConfigured } from "./lib/supabase";
 import {
   onSupabaseAuthChange,
@@ -127,6 +126,16 @@ function isAdminRole(role?: Role | null) {
 
 function isSuperAdminRole(role?: Role | null) {
   return role === "super_admin";
+}
+
+function toPortalUser(customer: Customer): PortalUser {
+  return {
+    id: customer.id,
+    email: customer.email,
+    displayName: customer.displayName,
+    role: customer.role,
+    clientName: customer.role === "customer" ? customer.clientName : undefined,
+  };
 }
 
 function getSignedInAdmin(state: AppState) {
@@ -351,13 +360,7 @@ function App() {
       const previewUser = previewUserId
         ? portalData.customers.find((customer) => customer.id === previewUserId)
         : undefined;
-      const previewPortalUser: PortalUser | undefined = previewUser ? {
-        id: previewUser.id,
-        email: previewUser.email,
-        displayName: previewUser.displayName,
-        role: previewUser.role,
-        clientName: previewUser.role === "customer" ? previewUser.clientName : undefined,
-      } : undefined;
+      const previewPortalUser = previewUser ? toPortalUser(previewUser) : undefined;
       if (previewUserId && !previewPortalUser) {
         sessionStorage.removeItem(PREVIEW_USER_KEY);
         setPreviewUserId("");
@@ -380,8 +383,6 @@ function App() {
   }, [previewUserId]);
 
   useEffect(() => {
-    clearLegacyPortalState();
-
     if (!isSupabaseConfigured) {
       setAuthError("Portal configuration is incomplete. Please contact FuelSearch support.");
       setAuthReady(true);
@@ -701,9 +702,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
   const totalLitres = completed.reduce((sum, tx) => sum + (tx.filledFuelL ?? 0), 0);
   const totalAmount = completed.reduce((sum, tx) => sum + tx.totalPrice, 0);
   const customerIssues = state.issues.filter((issue) => issue.source === "Customer Statement" && issue.clientName === clientName);
-  const unreadIssueUpdates = customerIssues.filter((issue) =>
-    issue.customerUpdateAt && (!issue.customerSeenAt || issue.customerUpdateAt > issue.customerSeenAt),
-  );
+  const unreadIssueUpdates = customerIssues.filter((issue) => isAfter(issue.customerUpdateAt, issue.customerSeenAt));
   const currentMonth = selectedMonth === monthKey(new Date().toISOString());
   const periodLabel = currentMonth ? `${monthLabel(selectedMonth)} Month-to-Date` : monthLabel(selectedMonth);
 
@@ -823,7 +822,7 @@ function StatementPage({ state, update, logout, exitPreview }: { state: AppState
         {filtered.length > visible && <button className="button outline centered" onClick={() => setVisible((count) => count + 20)}><ChevronDown size={16} /> Load More ({filtered.length - visible} remaining)</button>}
       </section>
       {invoiceTx && <InvoiceModal tx={invoiceTx} customer={customer} onClose={() => setInvoiceTx(null)} onReport={() => setIssueTx(invoiceTx)} />}
-      {issueError && <p className="auth-message auth-error statement-action-error" role="alert">{issueError}</p>}
+      {issueError && <p className="auth-message auth-error" role="alert">{issueError}</p>}
       {issueTx && <IssueDialog tx={issueTx.order ? issueTx : undefined} onClose={() => setIssueTx(null)} onSubmit={(payload) => void reportIssue(payload)} />}
       {requestsOpen && <CustomerRequestsDialog issues={customerIssues} onClose={() => setRequestsOpen(false)} onSeen={async (issue) => { await markIssueSeen(issue.id); update({ issues: state.issues.map((item) => item.id === issue.id ? { ...item, customerSeenAt: new Date().toISOString() } : item) }); }} />}
     </main>
@@ -906,7 +905,7 @@ function CustomerRequestsDialog({ issues, onClose, onSeen }: { issues: Issue[]; 
     <Modal title="My Support Requests" onClose={onClose} wide>
       <div className="customer-requests">
         {sorted.map((issue) => {
-          const unread = Boolean(issue.customerUpdateAt && (!issue.customerSeenAt || issue.customerUpdateAt > issue.customerSeenAt));
+          const unread = isAfter(issue.customerUpdateAt, issue.customerSeenAt);
           return (
             <article className={`customer-request ${unread ? "unread" : ""}`} key={issue.id}>
               <div className="customer-request-head"><div><h3>{issue.title}</h3><p>Submitted {dateTime(issue.loggedAt)}{issue.orderRef ? ` · Order ${issue.orderRef}` : ""}</p></div><StatusBadge status={issue.status} /></div>
@@ -942,20 +941,15 @@ function AdminLayout({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const currentAdmin = getSignedInAdmin(state);
   const permissions = resolveAdminPermissions(currentAdmin);
-  const canManageTransactions = !!currentAdmin && (isSuperAdminRole(currentAdmin.role) || !!permissions?.manageTransactions);
-  const canManageUsers = !!currentAdmin && (isSuperAdminRole(currentAdmin.role) || !!permissions?.manageUsers);
-  const canManageSupport = !!currentAdmin && (isSuperAdminRole(currentAdmin.role) || !!permissions?.manageSupport);
-  const canViewActivityLog = !!currentAdmin && (isSuperAdminRole(currentAdmin.role) || !!permissions?.viewActivityLog);
+  // resolveAdminPermissions already returns all-true for super admins and null for non-admins.
+  const canManageTransactions = !!permissions?.manageTransactions;
+  const canManageUsers = !!permissions?.manageUsers;
+  const canManageSupport = !!permissions?.manageSupport;
+  const canViewActivityLog = !!permissions?.viewActivityLog;
   const canPreviewUsers = isSuperAdminRole(signedInUser?.role);
   const previewUsers = state.customers
     .filter((customer) => customer.email !== signedInUser?.email)
-    .map<PortalUser>((customer) => ({
-      id: customer.id,
-      email: customer.email,
-      displayName: customer.displayName,
-      role: customer.role,
-      clientName: customer.role === "customer" ? customer.clientName : undefined,
-    }));
+    .map(toPortalUser);
   const unreadSupportCount = useMemo(
     () => state.issues.filter((issue) => isAfter(issue.loggedAt, state.supportNotificationsSeenAt)).length,
     [state.issues, state.supportNotificationsSeenAt],
@@ -1411,7 +1405,6 @@ function TransactionForm({ tx, onClose, onSave }: { tx?: Transaction; onClose: (
 function ImportDialog({ state, update, onClose, onError, onComplete }: { state: AppState; update: (next: Partial<AppState>) => void; onClose: () => void; onError: (message: string) => void; onComplete: (message: string) => void }) {
   const [filename, setFilename] = useState("");
   const [rows, setRows] = useState<Transaction[]>([]);
-  const [message, setMessage] = useState("");
   const [importing, setImporting] = useState(false);
   const [processed, setProcessed] = useState(0);
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1426,9 +1419,8 @@ function ImportDialog({ state, update, onClose, onError, onComplete }: { state: 
     const orders = new Set(rows.map((tx) => tx.order));
     const preserved = state.transactions.filter((tx) => !orders.has(tx.order));
     const actorEmail = state.currentUser?.email ?? "unknown";
-    const batch: ImportBatch = { id: makeId("batch"), filename, importedAt: new Date().toISOString(), importedBy: actorEmail, rowsInFile: rows.length, imported: rows.length, skipped: 0, droppedInParser: 0, orderNumbers: rows.map((tx) => tx.order) };
+    const batch: ImportBatch = { id: makeId("batch"), filename, importedAt: new Date().toISOString(), importedBy: actorEmail, rowsInFile: rows.length, imported: rows.length };
     onError("");
-    setMessage("");
     setProcessed(0);
     setImporting(true);
     try {
@@ -1468,7 +1460,6 @@ function ImportDialog({ state, update, onClose, onError, onComplete }: { state: 
     <Modal title="Import Transactions" onClose={onClose} wide>
       <div className="import-drop"><Upload size={28} /><strong>Choose the FuelSearch export</strong><p>Supports .xlsx, .xls, and .csv. Existing records are replaced by Order #.</p><input type="file" accept=".xlsx,.xls,.csv" disabled={importing} onChange={handleFile} /></div>
       {rows.length > 0 && <div className="table-card compact"><div className="section-head"><div><h2>{filename}</h2><p>{rows.length.toLocaleString()} valid rows detected. Previewing first 5 rows.</p></div><button className="button primary" disabled={importing} onClick={() => void commit()}>{importing ? `Importing ${progress}%` : `Import ${rows.length.toLocaleString()} Rows`}</button></div>{importing && <div className="import-progress" role="status" aria-live="polite"><div className="import-progress-copy"><strong>Import in progress</strong><span>{processed.toLocaleString()} of {rows.length.toLocaleString()} rows ({progress}%)</span></div><div className="import-progress-track"><span style={{ width: `${progress}%` }} /></div><p>Keep this window open until the import is complete.</p></div>}<SimpleTxTable transactions={rows.slice(0, 5)} /></div>}
-      {message && <p className="success-note"><CheckCircle2 size={16} /> {message}</p>}
     </Modal>
   );
 }
@@ -1644,13 +1635,7 @@ function CustomersAdmin({
                       <IconButton
                         label={`Preview as ${customer.displayName}`}
                         onClick={() => {
-                          previewAs({
-                            id: customer.id,
-                            email: customer.email,
-                            displayName: customer.displayName,
-                            role: customer.role,
-                            clientName: customer.role === "customer" ? customer.clientName : undefined,
-                          });
+                          previewAs(toPortalUser(customer));
                           navigate(customer.role === "customer" ? "/statement" : "/admin");
                         }}
                       >
@@ -1709,9 +1694,6 @@ function CustomerForm({ customer, clientDirectory, allowSuperAdmin, onClose, onS
     return draft;
   };
   const [form, setForm] = useState<Customer>(() => createDraft());
-  useEffect(() => {
-    setForm(createDraft());
-  }, [customer, allowSuperAdmin]);
   const set = (key: keyof Customer, value: string) => setForm((current) => ({ ...current, [key]: value }));
   const setRole = (role: Role) => {
     setForm((current) => ({
@@ -1804,7 +1786,6 @@ function CustomerForm({ customer, clientDirectory, allowSuperAdmin, onClose, onS
 }
 
 function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partial<AppState>) => void }) {
-  const location = useLocation();
   const currentAdmin = getSignedInAdmin(state);
   const canDeleteRequests = isSuperAdminRole(currentAdmin?.role);
   const [search, setSearch] = useState("");
@@ -1845,12 +1826,6 @@ function IssuesAdmin({ state, update }: { state: AppState; update: (next: Partia
       setOperationError(error instanceof Error ? error.message : "Could not delete the support request.");
     }
   };
-
-  useEffect(() => {
-    if (location.pathname === "/admin/issues" && state.issues.some((issue) => isAfter(issue.loggedAt, state.supportNotificationsSeenAt))) {
-      update({ supportNotificationsSeenAt: new Date().toISOString() });
-    }
-  }, [location.pathname, state.issues, state.supportNotificationsSeenAt]);
 
   const createRequest = async (payload: { title: string; description: string; category: string; priority: IssuePriority; orderRef?: string }) => {
     const now = new Date().toISOString();
@@ -1957,7 +1932,7 @@ function ActivityLogPage({ state }: { state: AppState }) {
   return <div className="page-stack"><h1>Activity Log</h1><div className="table-card"><table><thead><tr><th>Action</th><th>Admin</th><th>Details</th><th>Performed At</th></tr></thead><tbody>{state.activityLogs.map((log) => <tr key={log.id}><td>{log.action}</td><td>{log.adminEmail}</td><td>{log.details}</td><td>{dateTime(log.performedAt)}</td></tr>)}</tbody></table></div></div>;
 }
 
-function downloadCsv(rows: Transaction[], filename = "fuelsearch-statement.csv", preamble: string[] = []) {
+function downloadCsv(rows: Transaction[], filename: string, preamble: string[] = []) {
   const headers = ["Order #", "Client", "Depot", "Vehicle", "Status", "Filled Fuel (L)", "Fuel Price (per L)", "Total Price", "Created At"];
   const body = rows.map((tx) => [tx.order, tx.clientName, tx.depot, tx.vehicle, tx.status, tx.filledFuelL ?? "", tx.fuelPricePerL ?? "", tx.totalPrice, tx.createdAt].map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","));
   const blob = new Blob([[...preamble, headers.join(","), ...body].join("\n")], { type: "text/csv" });

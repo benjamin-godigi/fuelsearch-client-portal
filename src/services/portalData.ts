@@ -19,11 +19,9 @@ import type { AppState } from "./store";
 
 interface ClientRow {
   id: number;
-  user_id: string | null;
   name: string;
   contact_name: string | null;
   contact_email: string | null;
-  phone: string | null;
   vat_number: string | null;
   registration_number: string | null;
   address_line_1: string | null;
@@ -31,8 +29,6 @@ interface ClientRow {
   city: string | null;
   province: string | null;
   postal_code: string | null;
-  is_active: boolean;
-  created_at: string;
 }
 
 interface ProfileRow {
@@ -42,7 +38,6 @@ interface ProfileRow {
   role: "super_admin" | "admin" | "customer";
   admin_permissions: AdminPermissions | null;
   must_change_password: boolean;
-  is_active: boolean;
   client_id: number | null;
 }
 
@@ -82,7 +77,6 @@ interface IssueRow {
   updated_at: string;
   customer_update_at: string | null;
   customer_seen_at: string | null;
-  client_id: number | null;
   clients: Array<{ name: string }> | { name: string } | null;
 }
 
@@ -99,9 +93,6 @@ interface ImportBatchRow {
   filename: string;
   rows_in_file: number;
   imported: number;
-  skipped: number;
-  dropped_in_parser: number;
-  order_numbers: string[];
   imported_at: string;
   imported_by_email: string;
 }
@@ -132,7 +123,7 @@ export async function loadPortalData(
   const supabase = requireSupabase();
   const { data: profileData, error: profileError } = await supabase
     .from("profiles")
-    .select("user_id, email, display_name, role, admin_permissions, must_change_password, is_active, client_id")
+    .select("user_id, email, display_name, role, admin_permissions, must_change_password, client_id")
     .eq("is_active", true)
     .order("display_name");
 
@@ -149,7 +140,7 @@ export async function loadPortalData(
   let clientQuery = supabase
     .from("clients")
     .select(
-      "id, user_id, name, contact_name, contact_email, phone, vat_number, registration_number, address_line_1, address_line_2, city, province, postal_code, is_active, created_at",
+      "id, name, contact_name, contact_email, vat_number, registration_number, address_line_1, address_line_2, city, province, postal_code",
     )
     .order("name");
   if (signedInProfile.role === "customer") {
@@ -221,7 +212,7 @@ export async function loadPortalData(
   const [{ data: issueData, error: issueError }, { data: activityData, error: activityError }, { data: importData, error: importError }] = await Promise.all([
     supabase
       .from("issues")
-      .select("id, title, description, category, priority, status, reported_by, source, order_reference, resolution_notes, created_at, updated_at, customer_update_at, customer_seen_at, client_id, clients(name)")
+      .select("id, title, description, category, priority, status, reported_by, source, order_reference, resolution_notes, created_at, updated_at, customer_update_at, customer_seen_at, clients(name)")
       .order("updated_at", { ascending: false }),
     supabase
       .from("activity_logs")
@@ -230,7 +221,7 @@ export async function loadPortalData(
       .limit(500),
     supabase
       .from("import_batches")
-      .select("id, filename, rows_in_file, imported, skipped, dropped_in_parser, order_numbers, imported_at, imported_by_email")
+      .select("id, filename, rows_in_file, imported, imported_at, imported_by_email")
       .order("imported_at", { ascending: false })
       .limit(200),
   ]);
@@ -249,7 +240,7 @@ export async function loadPortalData(
     mustChangePassword: signedInProfile.must_change_password,
   };
 
-  const profileCustomers: Customer[] = profiles.map((profile) => {
+  const customers: Customer[] = profiles.map((profile) => {
     const ownedClient = clients.find((client) => client.id === profile.client_id);
     return {
       id: profile.user_id,
@@ -265,16 +256,12 @@ export async function loadPortalData(
     };
   });
 
-  const customers = profileCustomers;
-
   const clientDirectory: ClientDirectoryEntry[] = clients.map((client) => ({
     id: String(client.id),
     clientName: client.name,
     contactPerson: client.contact_name ?? undefined,
     email: client.contact_email ?? undefined,
-    phone: client.phone ?? undefined,
     address: joinAddress(client) || undefined,
-    createdAt: client.created_at,
   }));
 
   const transactions: Transaction[] = transactionData.map((transaction) => ({
@@ -331,9 +318,6 @@ export async function loadPortalData(
     importedBy: batch.imported_by_email,
     rowsInFile: batch.rows_in_file,
     imported: batch.imported,
-    skipped: batch.skipped,
-    droppedInParser: batch.dropped_in_parser,
-    orderNumbers: batch.order_numbers,
   }));
 
   return { currentUser, customers, clientDirectory, transactions, issues, activityLogs, importBatches };
@@ -341,14 +325,9 @@ export async function loadPortalData(
 
 interface TransactionChangeRow {
   id: string;
-  transaction_id: number | null;
-  order_number: string;
   source: TransactionChange["source"];
-  import_batch_id: string | null;
   changed_by_email: string;
   changed_at: string;
-  status_from: string | null;
-  status_to: string | null;
   changes: Record<string, { label?: string; from?: string; to?: string }> | null;
 }
 
@@ -359,7 +338,7 @@ export async function fetchTransactionHistory(transactionId: string): Promise<Tr
   if (!/^\d+$/.test(transactionId)) return [];
   const { data, error } = await requireSupabase()
     .from("transaction_changes")
-    .select("id, transaction_id, order_number, source, import_batch_id, changed_by_email, changed_at, status_from, status_to, changes")
+    .select("id, source, changed_by_email, changed_at, changes")
     .eq("transaction_id", Number(transactionId))
     .order("changed_at", { ascending: false });
   if (error) throw error;
@@ -372,15 +351,10 @@ export async function fetchTransactionHistory(transactionId: string): Promise<Tr
     }));
     return {
       id: row.id,
-      transactionId: row.transaction_id == null ? undefined : String(row.transaction_id),
-      orderNumber: row.order_number,
       source: row.source,
       changedByEmail: row.changed_by_email,
       changedAt: row.changed_at,
-      statusFrom: row.status_from ?? undefined,
-      statusTo: row.status_to ?? undefined,
       deltas,
-      importBatchId: row.import_batch_id ?? undefined,
     };
   });
 }
