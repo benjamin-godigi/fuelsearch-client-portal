@@ -847,7 +847,6 @@ function InvoiceModal({ tx, customer, onClose, onReport }: { tx: Transaction; cu
     <Modal title={`Invoice #${invoiceNumber}`} onClose={onClose} wide>
       <div className="invoice-toolbar">
         <button className="button outline danger" onClick={onReport}><LifeBuoy size={16} /> Get Support</button>
-        <button className="button outline" onClick={() => window.print()}><FileText size={16} /> Print</button>
         <button className="button primary" onClick={() => void downloadInvoicePdf(tx, customer)}><Download size={16} /> Download PDF</button>
       </div>
       <div className="invoice-paper">
