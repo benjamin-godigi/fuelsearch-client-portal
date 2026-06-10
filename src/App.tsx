@@ -2054,7 +2054,7 @@ async function downloadInvoicePdf(tx: Transaction, customer?: Customer) {
   pdf.setFontSize(8);
   BANKING_DETAILS.forEach((bank, index) => {
     const x = index % 2 === 0 ? 24 : 112;
-    const y = index < 2 ? 193 : 213;
+    const y = index < 2 ? 193 : 220;
     pdf.text(bank.bank, x, y);
     pdf.setFont("helvetica", "normal");
     pdf.setTextColor(90);
