@@ -48,6 +48,48 @@ prior drift that had to be reconciled).
 - Default shell is PowerShell, but PowerShell invocation via the Bash tool is
   blocked — use the Bash tool's bash for scripts.
 
+## Rollback runbook
+
+### Tag convention
+After every prod promotion, tag the new `main` HEAD:
+```bash
+git fetch origin main
+git tag release/YYYY-MM-DD origin/main
+git push origin release/YYYY-MM-DD
+```
+Use a sequence suffix if more than one release ships the same day: `release/2026-06-10-2`.
+
+### Option A — Vercel instant rollback (fastest, no code change)
+1. Open the Vercel dashboard → **fuelsearch-client-portal** project → **Deployments**.
+2. Find the last known-good deployment (identified by the release tag date).
+3. Click **⋯ → Promote to Production**.
+4. Done — Vercel re-promotes that build in ~10 seconds, no rebuild.
+
+This is the right choice for a hot incident. It does **not** revert the Git history, so
+follow up with a code fix and a new promotion when ready.
+
+### Option B — git revert (clean code history)
+```bash
+# Revert a single bad commit (creates a new commit, safe for shared history)
+git revert <bad-commit-sha>
+git push origin main   # triggers Vercel rebuild → new prod deployment
+
+# Or revert back to a known release tag
+git revert <release-tag>..HEAD   # reverts every commit since that tag
+git push origin main
+```
+Then re-run any DB migrations that need to be undone manually (Vercel rollback does
+not touch the database).
+
+### Option C — hard reset to a release tag (destructive, last resort)
+```bash
+git checkout main
+git reset --hard release/YYYY-MM-DD
+git push --force-with-lease origin main
+```
+Only use this if `git revert` is not practical. It rewrites history — confirm with the
+team before proceeding.
+
 ## More detail
 
 See `DEPLOYMENT.md` (full Vercel + Supabase setup, env vars, auth URLs) and
