@@ -947,9 +947,10 @@ function AdminLayout({
   const canManageSupport = !!permissions?.manageSupport;
   const canViewActivityLog = !!permissions?.viewActivityLog;
   const canPreviewUsers = isSuperAdminRole(signedInUser?.role);
-  const previewUsers = state.customers
-    .filter((customer) => customer.email !== signedInUser?.email)
-    .map(toPortalUser);
+  const previewUsers = useMemo(
+    () => state.customers.filter((customer) => customer.email !== signedInUser?.email).map(toPortalUser),
+    [state.customers, signedInUser?.email],
+  );
   const unreadSupportCount = useMemo(
     () => state.issues.filter((issue) => isAfter(issue.loggedAt, state.supportNotificationsSeenAt)).length,
     [state.issues, state.supportNotificationsSeenAt],
