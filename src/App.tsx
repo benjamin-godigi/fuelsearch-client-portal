@@ -34,6 +34,7 @@ import {
   X,
 } from "lucide-react";
 import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Issue, IssuePriority, IssueStatus, PortalUser, Role, Transaction, TransactionChange, TransactionStatus } from "./types";
+import { jsPDF } from "jspdf";
 import { AppState, defaultState, makeId } from "./services/store";
 import { isSupabaseConfigured } from "./lib/supabase";
 import {
@@ -1965,7 +1966,6 @@ function downloadStatementCsv(rows: Transaction[], clientName: string, selectedM
 }
 
 async function downloadInvoicePdf(tx: Transaction, customer?: Customer) {
-  const { jsPDF } = await import("jspdf");
   const pdf = new jsPDF({ unit: "mm", format: "a4" });
   const navy = [31, 68, 103] as const;
   const invoiceNumber = `INV-${tx.order}`;
