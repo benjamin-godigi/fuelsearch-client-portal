@@ -153,7 +153,7 @@ Deno.serve(async (request) => {
           .select("is_active")
           .eq("user_id", existingAuthUser.id)
           .single();
-        if (existingProfile?.is_active === false) {
+        if (!existingProfile || existingProfile.is_active === false) {
           userId = existingAuthUser.id;
           reactivating = true;
           const { error: updateError } = await admin.auth.admin.updateUserById(userId, {
