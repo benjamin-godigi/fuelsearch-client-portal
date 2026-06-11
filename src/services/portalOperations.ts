@@ -170,8 +170,10 @@ export async function importTransactions(
   batch: ImportBatch,
   onProgress?: (processed: number, total: number) => void,
 ) {
-  const clientIds = await clientIdsForNames(transactions.map((transaction) => transaction.clientName));
-  const depotIds = await depotIdsForNames(transactions.map((transaction) => transaction.depot));
+  const [clientIds, depotIds] = await Promise.all([
+    clientIdsForNames(transactions.map((transaction) => transaction.clientName)),
+    depotIdsForNames(transactions.map((transaction) => transaction.depot)),
+  ]);
   const rows = await Promise.all(transactions.map((transaction) => {
     const clientId = clientIds.get(normalizedName(transaction.clientName));
     const depotId = depotIds.get(normalizedName(transaction.depot)) ?? null;

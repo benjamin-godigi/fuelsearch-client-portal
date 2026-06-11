@@ -2,6 +2,7 @@ node_modules/
 dist/
 .playwright-cli/
 supabase/.temp/
+backups/
 
 .env
 .env.*

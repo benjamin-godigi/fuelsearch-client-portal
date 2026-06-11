@@ -33,7 +33,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Issue, IssuePriority, IssueStatus, PortalUser, Role, Transaction, TransactionChange, TransactionStatus } from "./types";
+import type { ActivityLog, AdminPermissions, ClientDirectoryEntry, Customer, ImportBatch, Issue, IssuePriority, IssueStatus, PortalUser, Role, Transaction, TransactionChange, TransactionStatus } from "./types";
 import { jsPDF } from "jspdf";
 import { AppState, defaultState, makeId } from "./services/store";
 import { isSupabaseConfigured } from "./lib/supabase";
@@ -847,7 +847,6 @@ function InvoiceModal({ tx, customer, onClose, onReport }: { tx: Transaction; cu
     <Modal title={`Invoice #${invoiceNumber}`} onClose={onClose} wide>
       <div className="invoice-toolbar">
         <button className="button outline danger" onClick={onReport}><LifeBuoy size={16} /> Get Support</button>
-        <button className="button outline" onClick={() => window.print()}><FileText size={16} /> Print</button>
         <button className="button primary" onClick={() => void downloadInvoicePdf(tx, customer)}><Download size={16} /> Download PDF</button>
       </div>
       <div className="invoice-paper">
@@ -948,9 +947,10 @@ function AdminLayout({
   const canManageSupport = !!permissions?.manageSupport;
   const canViewActivityLog = !!permissions?.viewActivityLog;
   const canPreviewUsers = isSuperAdminRole(signedInUser?.role);
-  const previewUsers = state.customers
-    .filter((customer) => customer.email !== signedInUser?.email)
-    .map(toPortalUser);
+  const previewUsers = useMemo(
+    () => state.customers.filter((customer) => customer.email !== signedInUser?.email).map(toPortalUser),
+    [state.customers, signedInUser?.email],
+  );
   const unreadSupportCount = useMemo(
     () => state.issues.filter((issue) => isAfter(issue.loggedAt, state.supportNotificationsSeenAt)).length,
     [state.issues, state.supportNotificationsSeenAt],
@@ -1930,7 +1930,22 @@ function SupportRequestModal({ issue, onClose, onSave }: { issue: Issue; onClose
 }
 
 function ActivityLogPage({ state }: { state: AppState }) {
-  return <div className="page-stack"><h1>Activity Log</h1><div className="table-card"><table><thead><tr><th>Action</th><th>Admin</th><th>Details</th><th>Performed At</th></tr></thead><tbody>{state.activityLogs.map((log) => <tr key={log.id}><td>{log.action}</td><td>{log.adminEmail}</td><td>{log.details}</td><td>{dateTime(log.performedAt)}</td></tr>)}</tbody></table></div></div>;
+  return (
+    <div className="page-stack">
+      <div className="section-head">
+        <h1>Activity Log</h1>
+        <button className="button outline push-right" onClick={() => downloadActivityLogCsv(state.activityLogs)}>
+          <Download size={16} /> Export CSV
+        </button>
+      </div>
+      <div className="table-card">
+        <table>
+          <thead><tr><th>Action</th><th>Admin</th><th>Details</th><th>Performed At</th></tr></thead>
+          <tbody>{state.activityLogs.map((log) => <tr key={log.id}><td>{log.action}</td><td>{log.adminEmail}</td><td>{log.details}</td><td>{dateTime(log.performedAt)}</td></tr>)}</tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function downloadCsv(rows: Transaction[], filename: string, preamble: string[] = []) {
@@ -1941,6 +1956,18 @@ function downloadCsv(rows: Transaction[], filename: string, preamble: string[] =
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadActivityLogCsv(logs: ActivityLog[]) {
+  const headers = ["Action", "Admin", "Details", "Performed At"];
+  const body = logs.map((log) => [log.action, log.adminEmail, log.details, log.performedAt].map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","));
+  const blob = new Blob([[headers.join(","), ...body].join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `FuelSearch_Activity_Log_${new Date().toISOString().slice(0, 10)}.csv`;
   anchor.click();
   URL.revokeObjectURL(url);
 }

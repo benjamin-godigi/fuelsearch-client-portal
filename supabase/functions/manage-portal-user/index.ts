@@ -124,6 +124,7 @@ Deno.serve(async (request) => {
     const normalizedEmail = payload.email.trim().toLowerCase();
     let userId = "";
     let createdNewUser = false;
+    let reactivating = false;
 
     if (payload.action === "bootstrap") {
       const { data: users, error: usersError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
@@ -144,9 +145,31 @@ Deno.serve(async (request) => {
     if (!userId) {
       const { data: existingUsers, error: usersError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
       if (usersError) return json({ error: usersError.message, code: "AUTH_LOOKUP_FAILED" }, 400);
-      if (existingUsers.users.some((user) => user.email?.toLowerCase() === normalizedEmail)) {
-        return json({ error: `A portal account already exists for ${normalizedEmail}.`, code: "EMAIL_EXISTS" }, 409);
+      const existingAuthUser = existingUsers.users.find((user) => user.email?.toLowerCase() === normalizedEmail);
+      if (existingAuthUser) {
+        // Check whether the existing auth user's profile was deactivated — if so, reactivate instead of rejecting.
+        const { data: existingProfile } = await admin
+          .from("profiles")
+          .select("is_active")
+          .eq("user_id", existingAuthUser.id)
+          .single();
+        if (existingProfile?.is_active === false) {
+          userId = existingAuthUser.id;
+          reactivating = true;
+          const { error: updateError } = await admin.auth.admin.updateUserById(userId, {
+            password: temporaryPassword,
+            email_confirm: true,
+            ban_duration: "none",
+            user_metadata: { display_name: payload.displayName.trim() },
+          });
+          if (updateError) return json({ error: updateError.message }, 400);
+        } else {
+          return json({ error: `A portal account already exists for ${normalizedEmail}.`, code: "EMAIL_EXISTS" }, 409);
+        }
       }
+    }
+
+    if (!userId) {
       const { data: created, error: createError } = await admin.auth.admin.createUser({
         email: normalizedEmail,
         password: temporaryPassword,
@@ -220,7 +243,7 @@ Deno.serve(async (request) => {
       must_change_password: true,
       client_id: linkedClientId,
     };
-    const profileQuery = payload.action === "bootstrap"
+    const profileQuery = (payload.action === "bootstrap" || reactivating)
       ? admin.from("profiles").upsert(profileValues, { onConflict: "user_id" })
       : admin.from("profiles").insert(profileValues);
     const { error: profileError } = await profileQuery;
